@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "survey_id": "synthetic_site_v1",
+  "target_cells": {
+    "min_x": 0,
+    "max_x": 1,
+    "min_y": 0,
+    "max_y": 1
+  },
+  "frame": {
+    "origin_gu": [0.0, 0.0],
+    "cell_size_gu": 8192.0,
+    "axis_convention": "+x east, +y north; plan yaw = degrees CCW from +x",
+    "site_span_gu": [16384.0, 16384.0],
+    "field_spacing_gu": 128.0,
+    "render_mapping": {
+      "site_topdown.png": {
+        "px_per_gu": 0.25,
+        "origin_px": [512.0, 512.0],
+        "y_down_image": true,
+        "resolution": [4096, 4096]
+      }
+    }
+  },
+  "inputs": {
+    "land_source": "synthetic (no real ESM)",
+    "base_esm": "synthetic (no real ESM)"
+  },
+  "region": {
+    "id": "SYN",
+    "name": "SYNTHETIC REGION",
+    "cell_set_definition": "synthetic"
+  },
+  "fields": {
+    "elevation_thu": {"shape": [129, 129], "dtype": "float32", "note": "game units, cell-corner grid"},
+    "water_mask": {"shape": [129, 129], "dtype": "bool", "note": "z <= 0 water"},
+    "buildable_mask": {"shape": [129, 129], "dtype": "bool", "note": "terrain envelope gate"},
+    "raw_vtex_tiles": {"shape": [128, 128], "dtype": "uint8", "note": "texture indices over the site"}
+  },
+  "notes": "Synthetic site-survey fixture showing the frame/fields contract. The real site_survey.json additionally records exact input SHA-256 pins, region metadata, the land_roads polylines, and per-view render mapping transforms."
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-08-10",
+  "label": "manual-corrections-v1 non-building audit (Cityforge T0.3 acceptance repair)",
+  "note": "Exact audited exclusion list for the hash-pinned manual-corrections-v1 provisional split source.  Applied only when the pinned units.json sha256 matches; a mismatch fails closed.  These are review overrides (non_building_*), not derivation failures, and are recorded exactly once in the library exclusion ledger with the inspected preview evidence.",
+  "source": {
+    "product": "output/settlement-splits/markarth-side-v2/manual-corrections-v1/split/units.json",
+    "label": "manual-corrections-v1",
+    "sha256": "709bf8b53ed07b951c8d65d4affac508656cddec44ea572bf532f3cd4b1eea8e"
+  },
+  "decisions": [
+    {
+      "unit_id": "u31_city_walls",
+      "reason": "non_building_boundary",
+      "preview_evidence": "output/settlement-splits/markarth-side-v2/split-render-v6/unit_u31_city_walls/sheet_2x3.png",
+      "basis": "2026-08-10 lead inspection of the split-render-v6 contact sheet: the sheet shows the city wall network (boundary pieces), not a complete building unit; wall/boundary pieces are deferred per D-STAMP spec section 7, so this unit is not a building stamp candidate"
+    },
+    {
+      "unit_id": "u31_castle_walls",
+      "reason": "non_building_boundary",
+      "preview_evidence": "output/settlement-splits/markarth-side-v2/split-render-v6/unit_u31_castle_walls/sheet_2x3.png",
+      "basis": "2026-08-10 lead inspection of the split-render-v6 contact sheet: the sheet shows the castle wall network (boundary pieces), not a complete building unit; wall/boundary pieces are deferred per D-STAMP spec section 7, so this unit is not a building stamp candidate"
+    },
+    {
+      "unit_id": "u105_herringbone",
+      "reason": "non_building_vehicle",
+      "preview_evidence": "output/settlement-splits/markarth-side-v2/split-render-v6/unit_u105_herringbone/sheet_2x3.png",
+      "basis": "2026-08-10 lead inspection of the split-render-v6 contact sheet: the sheet shows a ship (vehicle), not a stone building; ships/docks belong to later solvers, not the building-stamp library, so this unit is not a building stamp candidate"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "site": "synthetic_site_v1",
+  "roads": [
+    {
+      "id": "street_main",
+      "kind": "street",
+      "width_gu": 512.0,
+      "points": [
+        [8000.0, 16000.0],
+        [12000.0, 15500.0],
+        [18000.0, 16500.0],
+        [24000.0, 16000.0],
+        [28000.0, 16000.0]
+      ]
+    },
+    {
+      "id": "lane_service",
+      "kind": "alley",
+      "width_gu": 256.0,
+      "points": [
+        [16000.0, 14000.0],
+        [20000.0, 14000.0]
+      ]
+    }
+  ],
+  "spaces": [
+    {
+      "id": "plaza_center",
+      "kind": "plaza",
+      "polygon": [
+        [15800.0, 15200.0],
+        [19000.0, 15200.0],
+        [19000.0, 16800.0],
+        [15800.0, 16800.0]
+      ]
+    }
+  ],
+  "lots": [
+    {
+      "id": "lot_a1",
+      "stamp": "synthetic_stone_house_01",
+      "x": 16050.0,
+      "y": 14380.0,
+      "yaw_deg": 90.0,
+      "door_targets": [
+        {
+          "door_id": "synthetic_door_a1",
+          "intent": "public",
+          "target_id": "plaza_center"
+        }
+      ]
+    },
+    {
+      "id": "lot_b1",
+      "stamp": "synthetic_stone_house_02",
+      "x": 17500.0,
+      "y": 14380.0,
+      "yaw_deg": 90.0,
+      "door_targets": [
+        {
+          "door_id": "synthetic_door_b1",
+          "intent": "public",
+          "target_id": "plaza_center"
+        }
+      ]
+    },
+    {
+      "id": "lot_c1",
+      "stamp": "synthetic_timber_house_01",
+      "x": 16800.0,
+      "y": 18650.0,
+      "yaw_deg": 0.0,
+      "door_targets": [
+        {
+          "door_id": "synthetic_door_c1",
+          "intent": "service",
+          "target_id": "lane_service"
+        }
+      ]
+    }
+  ],
+  "notes": "Synthetic resolved-sketch fixture: each lot has a solved centroid (x, y), a plan-map-CCW yaw, and explicit door targets. Matches the resolved.sketch.json contract consumed by plan_sketch.py."
+}

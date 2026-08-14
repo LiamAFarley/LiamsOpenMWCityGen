@@ -1,0 +1,659 @@
+{
+  "$defs": {
+    "access": {
+      "keys": {
+        "face_road": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        }
+      },
+      "type": "object"
+    },
+    "boundary": {
+      "keys": {
+        "boundary_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "gates": {
+          "item": "gate",
+          "required": false,
+          "type": "array"
+        },
+        "kind": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "palisade",
+            "fence",
+            "stone_wall"
+          ]
+        },
+        "polygon": {
+          "min_points": 4,
+          "required": true,
+          "type": "points"
+        }
+      },
+      "type": "object"
+    },
+    "district": {
+      "keys": {
+        "district_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "kind": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "core",
+            "residential",
+            "market",
+            "docks",
+            "farms",
+            "temple",
+            "keep",
+            "craft",
+            "outskirts"
+          ]
+        },
+        "notes": {
+          "required": false,
+          "type": "str"
+        },
+        "polygon": {
+          "min_points": 3,
+          "required": true,
+          "type": "points"
+        },
+        "texture_zone": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        }
+      },
+      "type": "object"
+    },
+    "feature": {
+      "keys": {
+        "feature_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "kind": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "well",
+            "statue",
+            "market_stalls",
+            "dock",
+            "boat",
+            "signpost",
+            "keep_trees"
+          ]
+        },
+        "notes": {
+          "required": false,
+          "type": "str"
+        },
+        "on_road": {
+          "nonempty": true,
+          "required": false,
+          "type": "str"
+        },
+        "position": {
+          "required": true,
+          "type": "point"
+        },
+        "yaw_deg": {
+          "required": true,
+          "type": "num"
+        }
+      },
+      "type": "object"
+    },
+    "frame": {
+      "keys": {
+        "origin_gu": {
+          "required": true,
+          "type": "point"
+        },
+        "site_survey_sha256": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "units": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "yaw_convention": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        }
+      },
+      "type": "object"
+    },
+    "gate": {
+      "keys": {
+        "gate_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "heading_deg": {
+          "required": true,
+          "type": "num"
+        },
+        "on_road": {
+          "nonempty": true,
+          "required": false,
+          "type": "str"
+        },
+        "position": {
+          "required": true,
+          "type": "point"
+        }
+      },
+      "type": "object"
+    },
+    "lot": {
+      "keys": {
+        "access": {
+          "keys": {
+            "face_road": {
+              "nonempty": true,
+              "required": true,
+              "type": "str"
+            }
+          },
+          "required": false,
+          "type": "object"
+        },
+        "district": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "lot_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "notes": {
+          "required": false,
+          "type": "str"
+        },
+        "position": {
+          "required": true,
+          "type": "point"
+        },
+        "request": {
+          "keys": {
+            "building_type": {
+              "nonempty": true,
+              "required": true,
+              "type": "str"
+            },
+            "multi_shell": {
+              "required": false,
+              "type": "bool"
+            },
+            "size_class": {
+              "required": false,
+              "type": "str",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            },
+            "stamp_id": {
+              "nonempty": true,
+              "required": false,
+              "type": "str"
+            }
+          },
+          "required": true,
+          "type": "object"
+        },
+        "terrain_policy": {
+          "keys": {
+            "max_cut_fill_gu": {
+              "required": false,
+              "type": "num"
+            },
+            "mode": {
+              "required": true,
+              "type": "str",
+              "values": [
+                "conform",
+                "flatten_pad"
+              ]
+            }
+          },
+          "required": true,
+          "type": "object"
+        },
+        "yaw_deg": {
+          "required": true,
+          "type": "num"
+        }
+      },
+      "type": "object"
+    },
+    "lot_request": {
+      "keys": {
+        "building_type": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "multi_shell": {
+          "required": false,
+          "type": "bool"
+        },
+        "size_class": {
+          "required": false,
+          "type": "str",
+          "values": [
+            "small",
+            "medium",
+            "large"
+          ]
+        },
+        "stamp_id": {
+          "nonempty": true,
+          "required": false,
+          "type": "str"
+        }
+      },
+      "type": "object"
+    },
+    "road": {
+      "keys": {
+        "class": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "street",
+            "approach",
+            "path",
+            "dock_lane"
+          ]
+        },
+        "connects": {
+          "item": "conn_ref",
+          "min_items": 1,
+          "required": true,
+          "type": "array"
+        },
+        "grade_policy": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "conform",
+            "regrade"
+          ]
+        },
+        "polyline": {
+          "min_points": 2,
+          "required": true,
+          "type": "points"
+        },
+        "road_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "surface": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "width_gu": {
+          "required": true,
+          "type": "num"
+        }
+      },
+      "type": "object"
+    },
+    "settlement": {
+      "keys": {
+        "anchor_cell": {
+          "required": true,
+          "type": "int2"
+        },
+        "name": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "seed_marker": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "target_cells": {
+          "keys": {
+            "max_x": {
+              "required": true,
+              "type": "int"
+            },
+            "max_y": {
+              "required": true,
+              "type": "int"
+            },
+            "min_x": {
+              "required": true,
+              "type": "int"
+            },
+            "min_y": {
+              "required": true,
+              "type": "int"
+            }
+          },
+          "required": true,
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "terrain_edit": {
+      "keys": {
+        "edit_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "falloff_gu": {
+          "required": true,
+          "type": "num"
+        },
+        "kind": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "flatten_shelf",
+            "mound",
+            "terrace",
+            "cut"
+          ]
+        },
+        "linked_to": {
+          "item": "link_ref",
+          "min_items": 1,
+          "required": true,
+          "type": "array"
+        },
+        "polygon": {
+          "min_points": 3,
+          "required": true,
+          "type": "points"
+        },
+        "target_height_gu": {
+          "required": true,
+          "type": "num"
+        }
+      },
+      "type": "object"
+    },
+    "terrain_policy": {
+      "keys": {
+        "max_cut_fill_gu": {
+          "required": false,
+          "type": "num"
+        },
+        "mode": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "conform",
+            "flatten_pad"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "texture_zone": {
+      "keys": {
+        "classes": {
+          "item": "zone_class",
+          "min_items": 1,
+          "required": true,
+          "type": "array"
+        },
+        "zone_id": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        }
+      },
+      "type": "object"
+    },
+    "wilderness_hint": {
+      "keys": {
+        "density": {
+          "required": true,
+          "type": "num"
+        },
+        "hint": {
+          "required": true,
+          "type": "str",
+          "values": [
+            "dense_forest",
+            "cleared",
+            "meadow",
+            "leave_wild"
+          ]
+        },
+        "polygon": {
+          "min_points": 3,
+          "required": true,
+          "type": "points"
+        }
+      },
+      "type": "object"
+    },
+    "zone_class": {
+      "keys": {
+        "texture": {
+          "nonempty": true,
+          "required": true,
+          "type": "str"
+        },
+        "weight": {
+          "required": true,
+          "type": "num"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "cityforge/dplan/city_plan_schema_v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Strict machine-readable contract for city_plan.json (T1.1). additionalProperties:false applies recursively; semantic gates (frame pin, id namespaces, references, geometry) are enforced by src/procgen/cityplan.py.",
+  "properties": {
+    "boundaries": {
+      "items": {
+        "$ref": "#/$defs/boundary"
+      },
+      "type": "array"
+    },
+    "design_notes": {
+      "type": "string"
+    },
+    "districts": {
+      "items": {
+        "$ref": "#/$defs/district"
+      },
+      "type": "array"
+    },
+    "features": {
+      "items": {
+        "$ref": "#/$defs/feature"
+      },
+      "type": "array"
+    },
+    "frame": {
+      "additionalProperties": false,
+      "properties": {
+        "origin_gu": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "site_survey_sha256": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "units": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "yaw_convention": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin_gu",
+        "site_survey_sha256",
+        "units",
+        "yaw_convention"
+      ],
+      "type": "object"
+    },
+    "lots": {
+      "items": {
+        "$ref": "#/$defs/lot"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "plan_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "roads": {
+      "items": {
+        "$ref": "#/$defs/road"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "type": "integer"
+    },
+    "settlement": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor_cell": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "seed_marker": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_cells": {
+          "additionalProperties": false,
+          "properties": {
+            "max_x": {
+              "type": "integer"
+            },
+            "max_y": {
+              "type": "integer"
+            },
+            "min_x": {
+              "type": "integer"
+            },
+            "min_y": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max_x",
+            "max_y",
+            "min_x",
+            "min_y"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "anchor_cell",
+        "name",
+        "seed_marker",
+        "target_cells"
+      ],
+      "type": "object"
+    },
+    "terrain_edits": {
+      "items": {
+        "$ref": "#/$defs/terrain_edit"
+      },
+      "type": "array"
+    },
+    "texture_zones": {
+      "items": {
+        "$ref": "#/$defs/texture_zone"
+      },
+      "type": "array"
+    },
+    "wilderness_hints": {
+      "items": {
+        "$ref": "#/$defs/wilderness_hint"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "boundaries",
+    "design_notes",
+    "districts",
+    "features",
+    "frame",
+    "lots",
+    "plan_id",
+    "roads",
+    "schema_version",
+    "settlement",
+    "terrain_edits",
+    "texture_zones",
+    "wilderness_hints"
+  ],
+  "title": "Cityforge D-PLAN city_plan.json strict schema v1",
+  "type": "object"
+}

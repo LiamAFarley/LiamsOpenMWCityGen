@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.so
+.DS_Store
+Thumbs.db
+
+# Local scratch / generated artifacts
+output/
+*.npy
+*.npz
+*.raw
+*.png
+*.jpg
+
+# Game/mod data never lives in the core
+*.esm
+*.esp
+*.bsa
+*.omwaddon
+*.nif
+*.dds

@@ -1,0 +1,84 @@
+{
+  "product": "cityforge_frontage_fit_v1",
+  "schema_version": 1,
+  "site": "synthetic_site_v1",
+  "input_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "config": {
+    "along_offsets_gu": [0.0, 128.0, -128.0, 256.0, -256.0],
+    "beam_width": 256,
+    "door_gaps_gu": [128.0, 256.0, 384.0],
+    "facing_limit_deg": 60.0,
+    "max_candidates_per_lot": 64,
+    "raw_reach_limit_gu": 768.0,
+    "reach_safety_margin_gu": 128.0,
+    "safety_reach_limit_gu": 640.0,
+    "yaw_perturbations_deg": [0.0, 7.5, -7.5]
+  },
+  "status": "solved",
+  "terminal_failure_code": null,
+  "unresolved_lot_ids": [],
+  "candidate_generated": 600,
+  "candidate_deduplicated": 575,
+  "candidate_unary_feasible": 42,
+  "states_expanded": 9000,
+  "search_counts": {
+    "candidate_generated": 600,
+    "candidate_deduplicated": 575,
+    "candidate_unary_feasible": 42,
+    "states_expanded": 9000
+  },
+  "lots": [
+    {
+      "lot_id": "lot_a1",
+      "district": "synthetic_downtown",
+      "role": "civic",
+      "stamp": "synthetic_stone_house_01",
+      "marker": [16000.0, 14500.0],
+      "marker_projection": {
+        "distance_gu": 200.0,
+        "projection_gu": [16120.0, 14510.0],
+        "segment_index": 2
+      },
+      "candidate_count_generated": 200,
+      "candidate_count_deduplicated": 195,
+      "candidate_count_unary_feasible": 18,
+      "rejection_histogram": {
+        "unbuildable": 150,
+        "road_corridor_conflict": 27
+      },
+      "declared_door_ids": ["synthetic_door_a1"],
+      "undeclared_doors": [],
+      "declared_door_facts": [
+        {
+          "door_id": "synthetic_door_a1",
+          "intent": "public",
+          "target_id": "plaza_center",
+          "target_kind": "authored_space",
+          "raw_reach_gu": 512.0,
+          "raw_reach_limit_gu": 768.0,
+          "safety_limit_gu": 640.0,
+          "path_edge_distance_gu": 512.0,
+          "heading_deg": 90.0,
+          "facing_deviation_deg": 0.0
+        }
+      ],
+      "selected": {
+        "candidate_ordinal": 12,
+        "anchor": [16050.0, 14280.0],
+        "centroid": [16050.0, 14380.0],
+        "yaw_deg": 90.0,
+        "yaw_perturbation_deg": 0.0,
+        "along_frontage_offset_gu": 0.0,
+        "door_gap_gu": 128.0,
+        "marker_displacement_gu": 120.0,
+        "primary_target_id": "plaza_center"
+      }
+    }
+  ],
+  "limitations": [
+    "conservative exact 2D inter-building collision/contact rejection",
+    "no semantic stamp selection",
+    "no terrain pad or final ESP seating",
+    "--auto-face must not be applied to resolved fitter output"
+  ]
+}
