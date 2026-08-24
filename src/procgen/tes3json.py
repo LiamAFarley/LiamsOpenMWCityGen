@@ -482,6 +482,77 @@ def decode_land_heights(record: Mapping[str, Any], *, game_units: bool = True) -
     return result
 
 
+def _landscape_flags_value(value: object) -> int:
+    """Parse a tes3conv ``landscape_flags`` string into the DATA u32 value."""
+    result = 0
+    for token in str(value).split("|"):
+        token = token.strip()
+        if not token:
+            continue
+        if token.startswith("0x"):
+            result |= int(token, 16)
+        elif token == "USES_VERTEX_HEIGHTS_AND_NORMALS":
+            result |= 0x1
+        elif token == "USES_VERTEX_COLORS":
+            result |= 0x2
+        elif token == "USES_TEXTURES":
+            result |= 0x4
+        else:
+            raise ValueError(f"unknown landscape flag {token!r}")
+    return result
+
+
+def land_records_from_json(doc: Iterable[Mapping[str, Any]]) -> dict[tuple[int, int], Any]:
+    """Load the edited-LAND ``Landscape`` records from a tes3conv JSON document.
+
+    The city generation emits its terrain edits as a masterless tes3conv JSON
+    document (``Header`` + ``Landscape`` + ``LandscapeTexture`` records, with
+    zstd/base64 blob subrecords) rather than an ESP.  This parses every
+    ``Landscape`` record back into the same ``procgen.espland.LandRecord``
+    objects that ``espland.load_land`` produces from a plugin, so scatter and
+    groundcover generators can consume the city's edited landscape directly
+    without a tes3conv/ESP conversion.
+
+    ``vertex_heights`` is stored as ``{"offset": ..., "data": <zstd/base64 of
+    the 4225 signed i8 deltas>}``; ``decode_land_heights`` is reused for the
+    row-major THU grid.  The VHGT trailing padding bytes are not preserved by
+    the JSON format and are emitted as empty (these records are read-only for
+    placement; they are not re-authored).
+    """
+
+    from .espland import LandRecord, transpose_vtex_serialized_to_openmw
+
+    result: dict[tuple[int, int], LandRecord] = {}
+    for record in doc:
+        if not isinstance(record, Mapping) or record.get("type") != "Landscape":
+            continue
+        grid_raw = record.get("grid")
+        if not isinstance(grid_raw, (list, tuple)) or len(grid_raw) != 2:
+            raise ValueError("Landscape record grid must be [x, y]")
+        grid = (int(grid_raw[0]), int(grid_raw[1]))
+        heights = decode_land_heights(record, game_units=False)
+        height_offset = float(record.get("vertex_heights", {}).get("offset", 0.0))
+        texture_raw = decode_blob(record.get("texture_indices"))
+        if len(texture_raw) != _LAND_TEXTURE_COUNT * 2:
+            raise ValueError(
+                f"Landscape {grid} texture data must contain {_LAND_TEXTURE_COUNT * 2} bytes"
+            )
+        serialized_values = struct.unpack(f"<{_LAND_TEXTURE_COUNT}H", texture_raw)
+        texture_indices = transpose_vtex_serialized_to_openmw(serialized_values)
+        result[grid] = LandRecord(
+            grid=grid,
+            flags=_landscape_flags_value(record.get("landscape_flags", "")),
+            heights_thu=tuple(tuple(row) for row in heights),
+            offset_thu=height_offset,
+            texture_indices=texture_indices,
+            vhgt_tail=b"",
+            vertex_normals=decode_blob(record.get("vertex_normals")),
+            vertex_colors=decode_blob(record.get("vertex_colors")),
+            world_map_data=decode_blob(record.get("world_map_data")),
+        )
+    return result
+
+
 def build_container(
     record_id: str,
     *,

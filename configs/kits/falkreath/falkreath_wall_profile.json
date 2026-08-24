@@ -1,0 +1,13 @@
+{
+  "profile_version": "falkreath_complete_castle_v1",
+  "kit_json": "configs/kits/falkreath/wall_kit.json",
+  "simplify_tolerance_gu": 128.0,
+  "max_vertex_move_gu": 256.0,
+  "min_run_gu": 512.0,
+  "max_turn_without_tower_deg": 0.0,
+  "allowed_fill_piece_ids": ["sky_ex_cs_re_wl_04"],
+  "tower_piece_id": "sky_ex_cs_re_twr_06",
+  "gatehouse_piece_id": "sky_ex_cs_re_gh_01",
+  "reserve_clearance_gu": 0.0,
+  "height_policy": "flat_runs_tower_absorbs_seams"
+}

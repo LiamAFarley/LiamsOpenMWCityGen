@@ -1,0 +1,2192 @@
+{
+  "$defs": {
+    "CityLayout": {
+      "additionalProperties": false,
+      "properties": {
+        "anchors": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "anchor_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "market",
+                  "keep",
+                  "temple"
+                ],
+                "type": "string"
+              },
+              "patch_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "polygon": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 3,
+                "type": "array"
+              }
+            },
+            "required": [
+              "anchor_id",
+              "kind",
+              "patch_id",
+              "polygon"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "approaches": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "approach_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "crossing_plan_gu": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "inward_tangent": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "mandatory": {
+                "type": "boolean"
+              },
+              "outside_polyline_plan_gu": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 2,
+                "type": "array"
+              },
+              "source_edge_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "transition_stub_plan_gu": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 2,
+                "type": "array"
+              }
+            },
+            "required": [
+              "approach_id",
+              "crossing_plan_gu",
+              "inward_tangent",
+              "mandatory",
+              "outside_polyline_plan_gu",
+              "source_edge_id",
+              "transition_stub_plan_gu"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "boundary_edges": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "a_node": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "b_node": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "edge_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "edge_role": {
+                "enum": [
+                  "block",
+                  "wall",
+                  "fringe"
+                ],
+                "type": "string"
+              },
+              "geometry": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 2,
+                "type": "array"
+              },
+              "patch_left": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "patch_right": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "road_class": {
+                "enum": [
+                  "none",
+                  "regional_approach",
+                  "arterial",
+                  "street",
+                  "lane",
+                  "alley"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "a_node",
+              "b_node",
+              "edge_id",
+              "edge_role",
+              "geometry",
+              "patch_left",
+              "patch_right",
+              "road_class"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "candidate_id": {
+          "minLength": 1,
+          "pattern": "^c[0-9]{2}$",
+          "type": "string"
+        },
+        "frame": {
+          "additionalProperties": false,
+          "properties": {
+            "coordinate_space": {
+              "enum": [
+                "site_survey_plan_gu"
+              ],
+              "type": "string"
+            },
+            "origin_gu": {
+              "items": false,
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "site_survey_sha256": {
+              "minLength": 1,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "units": {
+              "enum": [
+                "game_units"
+              ],
+              "type": "string"
+            },
+            "yaw_convention": {
+              "enum": [
+                "+x east +y north; yaw degrees CCW from +x about door anchor"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "coordinate_space",
+            "origin_gu",
+            "site_survey_sha256",
+            "units",
+            "yaw_convention"
+          ],
+          "type": "object"
+        },
+        "gates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "approach_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "gate_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "outward_tangent": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "position": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              }
+            },
+            "required": [
+              "approach_id",
+              "gate_id",
+              "outward_tangent",
+              "position"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "layout_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "junction",
+                  "gate",
+                  "source_approach",
+                  "plaza",
+                  "anchor"
+                ],
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "position": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "node_id",
+              "position"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "open_spaces": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "plaza",
+                  "court",
+                  "park",
+                  "verge"
+                ],
+                "type": "string"
+              },
+              "polygon": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 3,
+                "type": "array"
+              },
+              "space_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "polygon",
+              "space_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "parcels": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "allowed_roles": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "frontages": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "frontage_length_gu": {
+                      "type": "number"
+                    },
+                    "target_arc_end_gu": {
+                      "type": "number"
+                    },
+                    "target_arc_start_gu": {
+                      "type": "number"
+                    },
+                    "target_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "target_type": {
+                      "enum": [
+                        "street",
+                        "alley",
+                        "court",
+                        "plaza"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "frontage_length_gu",
+                    "target_arc_end_gu",
+                    "target_arc_start_gu",
+                    "target_id",
+                    "target_type"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "parcel_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "polygon": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 3,
+                "type": "array"
+              },
+              "required_occupancy": {
+                "type": "boolean"
+              },
+              "ward_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "allowed_roles",
+              "frontages",
+              "parcel_id",
+              "polygon",
+              "required_occupancy",
+              "ward_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "patches": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "inside_city": {
+                "type": "boolean"
+              },
+              "inside_wall": {
+                "type": "boolean"
+              },
+              "morphology_region": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "neighbour_patch_ids": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "patch_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "polygon": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 3,
+                "type": "array"
+              },
+              "terrain_summary": {
+                "additionalProperties": false,
+                "properties": {
+                  "mean_slope_deg": {
+                    "type": "number"
+                  },
+                  "water": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "mean_slope_deg",
+                  "water"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "inside_city",
+              "inside_wall",
+              "morphology_region",
+              "neighbour_patch_ids",
+              "patch_id",
+              "polygon",
+              "terrain_summary"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "placements": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "anyOf": [
+                  {
+                    "items": false,
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "parcel_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "stamp_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "yaw_deg": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "anchor",
+              "parcel_id",
+              "stamp_id",
+              "yaw_deg"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "reports": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "stage": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "ok",
+                  "repaired",
+                  "rejected"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "stage",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "rewrite_domain": {
+          "additionalProperties": false,
+          "properties": {
+            "polygon": {
+              "items": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "minItems": 3,
+              "type": "array"
+            }
+          },
+          "required": [
+            "polygon"
+          ],
+          "type": "object"
+        },
+        "roads": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "boundary_edge_ids": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "clear_width_gu": {
+                "type": "number"
+              },
+              "hierarchy": {
+                "enum": [
+                  "regional_approach",
+                  "arterial",
+                  "street",
+                  "lane",
+                  "alley"
+                ],
+                "type": "string"
+              },
+              "node_a": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "node_b": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "paint_surface": {
+                "enum": [
+                  "road",
+                  "settlement_dirt",
+                  "none"
+                ],
+                "type": "string"
+              },
+              "polyline": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 2,
+                "type": "array"
+              },
+              "road_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "source_edge_ids": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "boundary_edge_ids",
+              "clear_width_gu",
+              "hierarchy",
+              "node_a",
+              "node_b",
+              "paint_surface",
+              "polyline",
+              "road_id",
+              "source_edge_ids"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schema_version": {
+          "type": "integer"
+        },
+        "site_context": {
+          "additionalProperties": false,
+          "properties": {
+            "candidate_centers": {
+              "items": {
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "estimated_urban_area_gu2": {
+              "additionalProperties": false,
+              "properties": {
+                "max": {
+                  "type": "number"
+                },
+                "min": {
+                  "type": "number"
+                },
+                "preferred": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "max",
+                "min",
+                "preferred"
+              ],
+              "type": "object"
+            },
+            "hard_exclusion_polygons": {
+              "items": {
+                "items": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "minItems": 3,
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "site_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "span_gu": {
+              "items": false,
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "stamp_footprint_stats": {
+              "additionalProperties": false,
+              "properties": {
+                "p10": {
+                  "type": "number"
+                },
+                "p50": {
+                  "type": "number"
+                },
+                "p90": {
+                  "type": "number"
+                },
+                "parcel_yard_factor": {
+                  "type": "number"
+                },
+                "source": {
+                  "enum": [
+                    "dbrief_census_global_hull_area_gu2"
+                  ],
+                  "type": "string"
+                },
+                "urban_space_factor": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "p10",
+                "p50",
+                "p90",
+                "parcel_yard_factor",
+                "source",
+                "urban_space_factor"
+              ],
+              "type": "object"
+            },
+            "suitability_grid": {
+              "additionalProperties": false,
+              "properties": {
+                "nx": {
+                  "type": "integer"
+                },
+                "ny": {
+                  "type": "integer"
+                },
+                "origin_plan_gu": {
+                  "items": false,
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "spacing_gu": {
+                  "type": "number"
+                },
+                "values": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "nx",
+                "ny",
+                "origin_plan_gu",
+                "spacing_gu",
+                "values"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "candidate_centers",
+            "estimated_urban_area_gu2",
+            "hard_exclusion_polygons",
+            "site_id",
+            "span_gu",
+            "stamp_footprint_stats",
+            "suitability_grid"
+          ],
+          "type": "object"
+        },
+        "town_brief": {
+          "additionalProperties": false,
+          "properties": {
+            "anchors": {
+              "additionalProperties": false,
+              "properties": {
+                "keep": {
+                  "enum": [
+                    "required",
+                    "optional",
+                    "absent"
+                  ],
+                  "type": "string"
+                },
+                "market": {
+                  "enum": [
+                    "required",
+                    "optional",
+                    "absent"
+                  ],
+                  "type": "string"
+                },
+                "temple": {
+                  "enum": [
+                    "required",
+                    "optional",
+                    "absent"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "keep",
+                "market",
+                "temple"
+              ],
+              "type": "object"
+            },
+            "design_constraints": {
+              "additionalProperties": false,
+              "properties": {},
+              "required": [],
+              "type": "object"
+            },
+            "fortification": {
+              "additionalProperties": false,
+              "properties": {
+                "mode": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "type": "object"
+            },
+            "master_seed": {
+              "type": "integer"
+            },
+            "morphology": {
+              "enum": [
+                "organic",
+                "loose_grid",
+                "radial",
+                "meandering",
+                "mixed"
+              ],
+              "type": "string"
+            },
+            "pin_plan_gu": {
+              "items": false,
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "schema_version": {
+              "type": "integer"
+            },
+            "target_buildings": {
+              "additionalProperties": false,
+              "properties": {
+                "max": {
+                  "type": "integer"
+                },
+                "min": {
+                  "type": "integer"
+                },
+                "preferred": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "max",
+                "min",
+                "preferred"
+              ],
+              "type": "object"
+            },
+            "town_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "ward_mix": {
+              "additionalProperties": false,
+              "properties": {
+                "craft": {
+                  "type": "number"
+                },
+                "market": {
+                  "type": "number"
+                },
+                "outskirts": {
+                  "type": "number"
+                },
+                "residential": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "craft",
+                "market",
+                "outskirts",
+                "residential"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "anchors",
+            "design_constraints",
+            "fortification",
+            "master_seed",
+            "morphology",
+            "schema_version",
+            "target_buildings",
+            "town_id",
+            "ward_mix"
+          ],
+          "type": "object"
+        },
+        "wall": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "palisade"
+                  ],
+                  "type": "string"
+                },
+                "planning_polygon": {
+                  "items": {
+                    "items": false,
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "minItems": 4,
+                  "type": "array"
+                },
+                "source_perimeter": {
+                  "items": {
+                    "items": false,
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "minItems": 4,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "planning_polygon",
+                "source_perimeter"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wards": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "dplan_kind": {
+                "enum": [
+                  "core",
+                  "residential",
+                  "market",
+                  "docks",
+                  "farms",
+                  "temple",
+                  "keep",
+                  "craft",
+                  "outskirts"
+                ],
+                "type": "string"
+              },
+              "patch_ids": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "score_evidence": {
+                "additionalProperties": false,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              },
+              "ward_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ward_type": {
+                "enum": [
+                  "market",
+                  "craft",
+                  "residential",
+                  "outskirts",
+                  "keep"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "dplan_kind",
+              "patch_ids",
+              "score_evidence",
+              "ward_id",
+              "ward_type"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "anchors",
+        "approaches",
+        "boundary_edges",
+        "candidate_id",
+        "frame",
+        "gates",
+        "layout_id",
+        "nodes",
+        "open_spaces",
+        "parcels",
+        "patches",
+        "placements",
+        "reports",
+        "rewrite_domain",
+        "roads",
+        "schema_version",
+        "site_context",
+        "town_brief",
+        "wall",
+        "wards"
+      ],
+      "type": "object"
+    },
+    "TownBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "anchors": {
+          "additionalProperties": false,
+          "properties": {
+            "keep": {
+              "enum": [
+                "required",
+                "optional",
+                "absent"
+              ],
+              "type": "string"
+            },
+            "market": {
+              "enum": [
+                "required",
+                "optional",
+                "absent"
+              ],
+              "type": "string"
+            },
+            "temple": {
+              "enum": [
+                "required",
+                "optional",
+                "absent"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "keep",
+            "market",
+            "temple"
+          ],
+          "type": "object"
+        },
+        "design_constraints": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "fortification": {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        "master_seed": {
+          "type": "integer"
+        },
+        "morphology": {
+          "enum": [
+            "organic",
+            "loose_grid",
+            "radial",
+            "meandering",
+            "mixed"
+          ],
+          "type": "string"
+        },
+        "pin_plan_gu": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "schema_version": {
+          "type": "integer"
+        },
+        "target_buildings": {
+          "additionalProperties": false,
+          "properties": {
+            "max": {
+              "type": "integer"
+            },
+            "min": {
+              "type": "integer"
+            },
+            "preferred": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max",
+            "min",
+            "preferred"
+          ],
+          "type": "object"
+        },
+        "town_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "ward_mix": {
+          "additionalProperties": false,
+          "properties": {
+            "craft": {
+              "type": "number"
+            },
+            "market": {
+              "type": "number"
+            },
+            "outskirts": {
+              "type": "number"
+            },
+            "residential": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "craft",
+            "market",
+            "outskirts",
+            "residential"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "anchors",
+        "design_constraints",
+        "fortification",
+        "master_seed",
+        "morphology",
+        "schema_version",
+        "target_buildings",
+        "town_id",
+        "ward_mix"
+      ],
+      "type": "object"
+    },
+    "anchor": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "market",
+            "keep",
+            "temple"
+          ],
+          "type": "string"
+        },
+        "patch_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "polygon": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "anchor_id",
+        "kind",
+        "patch_id",
+        "polygon"
+      ],
+      "type": "object"
+    },
+    "boundary_edge": {
+      "additionalProperties": false,
+      "properties": {
+        "a_node": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "b_node": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "edge_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "edge_role": {
+          "enum": [
+            "block",
+            "wall",
+            "fringe"
+          ],
+          "type": "string"
+        },
+        "geometry": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "patch_left": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "patch_right": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "road_class": {
+          "enum": [
+            "none",
+            "regional_approach",
+            "arterial",
+            "street",
+            "lane",
+            "alley"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "a_node",
+        "b_node",
+        "edge_id",
+        "edge_role",
+        "geometry",
+        "patch_left",
+        "patch_right",
+        "road_class"
+      ],
+      "type": "object"
+    },
+    "frontage": {
+      "additionalProperties": false,
+      "properties": {
+        "frontage_length_gu": {
+          "type": "number"
+        },
+        "target_arc_end_gu": {
+          "type": "number"
+        },
+        "target_arc_start_gu": {
+          "type": "number"
+        },
+        "target_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_type": {
+          "enum": [
+            "street",
+            "alley",
+            "court",
+            "plaza"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "frontage_length_gu",
+        "target_arc_end_gu",
+        "target_arc_start_gu",
+        "target_id",
+        "target_type"
+      ],
+      "type": "object"
+    },
+    "gate": {
+      "additionalProperties": false,
+      "properties": {
+        "approach_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "gate_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "outward_tangent": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "position": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "approach_id",
+        "gate_id",
+        "outward_tangent",
+        "position"
+      ],
+      "type": "object"
+    },
+    "open_space": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "plaza",
+            "court",
+            "park",
+            "verge"
+          ],
+          "type": "string"
+        },
+        "polygon": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 3,
+          "type": "array"
+        },
+        "space_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "polygon",
+        "space_id"
+      ],
+      "type": "object"
+    },
+    "parcel": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_roles": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "frontages": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "frontage_length_gu": {
+                "type": "number"
+              },
+              "target_arc_end_gu": {
+                "type": "number"
+              },
+              "target_arc_start_gu": {
+                "type": "number"
+              },
+              "target_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "target_type": {
+                "enum": [
+                  "street",
+                  "alley",
+                  "court",
+                  "plaza"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "frontage_length_gu",
+              "target_arc_end_gu",
+              "target_arc_start_gu",
+              "target_id",
+              "target_type"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "parcel_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "polygon": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 3,
+          "type": "array"
+        },
+        "required_occupancy": {
+          "type": "boolean"
+        },
+        "ward_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "allowed_roles",
+        "frontages",
+        "parcel_id",
+        "polygon",
+        "required_occupancy",
+        "ward_id"
+      ],
+      "type": "object"
+    },
+    "patch": {
+      "additionalProperties": false,
+      "properties": {
+        "inside_city": {
+          "type": "boolean"
+        },
+        "inside_wall": {
+          "type": "boolean"
+        },
+        "morphology_region": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "neighbour_patch_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "patch_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "polygon": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 3,
+          "type": "array"
+        },
+        "terrain_summary": {
+          "additionalProperties": false,
+          "properties": {
+            "mean_slope_deg": {
+              "type": "number"
+            },
+            "water": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "mean_slope_deg",
+            "water"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "inside_city",
+        "inside_wall",
+        "morphology_region",
+        "neighbour_patch_ids",
+        "patch_id",
+        "polygon",
+        "terrain_summary"
+      ],
+      "type": "object"
+    },
+    "placement": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "items": false,
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parcel_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "stamp_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "yaw_deg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "anchor",
+        "parcel_id",
+        "stamp_id",
+        "yaw_deg"
+      ],
+      "type": "object"
+    },
+    "report": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "repaired",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "stage",
+        "status"
+      ],
+      "type": "object"
+    },
+    "road_edge": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary_edge_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "clear_width_gu": {
+          "type": "number"
+        },
+        "hierarchy": {
+          "enum": [
+            "regional_approach",
+            "arterial",
+            "street",
+            "lane",
+            "alley"
+          ],
+          "type": "string"
+        },
+        "node_a": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "node_b": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paint_surface": {
+          "enum": [
+            "road",
+            "settlement_dirt",
+            "none"
+          ],
+          "type": "string"
+        },
+        "polyline": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "road_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_edge_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "boundary_edge_ids",
+        "clear_width_gu",
+        "hierarchy",
+        "node_a",
+        "node_b",
+        "paint_surface",
+        "polyline",
+        "road_id",
+        "source_edge_ids"
+      ],
+      "type": "object"
+    },
+    "road_node": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "junction",
+            "gate",
+            "source_approach",
+            "plaza",
+            "anchor"
+          ],
+          "type": "string"
+        },
+        "node_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "position": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "node_id",
+        "position"
+      ],
+      "type": "object"
+    },
+    "source_approach": {
+      "additionalProperties": false,
+      "properties": {
+        "approach_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "crossing_plan_gu": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "inward_tangent": {
+          "items": false,
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "mandatory": {
+          "type": "boolean"
+        },
+        "outside_polyline_plan_gu": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "source_edge_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "transition_stub_plan_gu": {
+          "items": {
+            "items": false,
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "approach_id",
+        "crossing_plan_gu",
+        "inward_tangent",
+        "mandatory",
+        "outside_polyline_plan_gu",
+        "source_edge_id",
+        "transition_stub_plan_gu"
+      ],
+      "type": "object"
+    },
+    "ward": {
+      "additionalProperties": false,
+      "properties": {
+        "dplan_kind": {
+          "enum": [
+            "core",
+            "residential",
+            "market",
+            "docks",
+            "farms",
+            "temple",
+            "keep",
+            "craft",
+            "outskirts"
+          ],
+          "type": "string"
+        },
+        "patch_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "score_evidence": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "ward_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "ward_type": {
+          "enum": [
+            "market",
+            "craft",
+            "residential",
+            "outskirts",
+            "keep"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "dplan_kind",
+        "patch_ids",
+        "score_evidence",
+        "ward_id",
+        "ward_type"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "cityforge/townlayout/town_layout_schema_v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Strict machine-readable contract for town_brief.json and city_layout.json. additionalProperties:false applies recursively; semantic gates are enforced by src/procgen/townlayout/validate.py. V2 townlayout Phase 1 contracts; no generation.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TownBrief"
+    },
+    {
+      "$ref": "#/$defs/CityLayout"
+    }
+  ],
+  "title": "Cityforge V2 townlayout TownBrief + CityLayout schema v1"
+}

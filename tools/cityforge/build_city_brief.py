@@ -41,6 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from procgen import citybrief, regionpalette  # noqa: E402
+from procgen.road_semantics import load_road_assignments  # noqa: E402
 from procgen.censusio import (  # noqa: E402
     PinnedFile,
     deterministic_dumps,
@@ -49,6 +50,7 @@ from procgen.censusio import (  # noqa: E402
 )
 
 CANONICAL_OUT = "output/cityforge/briefs/falkreath_v1"
+DEFAULT_LANDSCAPE_POLICY = "configs/landscape/kreathi_dale_v1.json"
 
 #: Every authoritative input pinned by this build (relative to workspace root).
 PINNED_INPUTS: dict[str, str] = {
@@ -89,8 +91,30 @@ PINNED_INPUTS: dict[str, str] = {
 }
 
 
-def build_payloads(root: Path, date: str) -> dict[str, dict]:
+def build_payloads(
+        root: Path,
+        date: str,
+        landscape_policy: Path | str | None = None,
+) -> dict[str, dict]:
     """Run the whole census and return the four payload dicts."""
+    policy_path = Path(landscape_policy or DEFAULT_LANDSCAPE_POLICY)
+    if not policy_path.is_absolute():
+        policy_path = root / policy_path
+    if not policy_path.is_file():
+        raise citybrief.CensusError(f"landscape policy missing: {policy_path}")
+    landscape = json.loads(policy_path.read_text(encoding="utf-8"))
+    try:
+        road_assignments = {
+            name: assignment.to_dict()
+            for name, assignment in load_road_assignments(landscape).items()
+        }
+    except ValueError as exc:
+        raise citybrief.CensusError(
+            f"landscape policy road assignments are invalid: {exc}") from exc
+    hierarchy_map = landscape.get("road_class_by_hierarchy") or {}
+    if not isinstance(hierarchy_map, dict):
+        raise citybrief.CensusError(
+            "landscape policy road_class_by_hierarchy must be an object")
     # --- pin inputs -------------------------------------------------------
     pins: dict[str, dict] = {}
     for alias, relative in PINNED_INPUTS.items():
@@ -102,6 +126,15 @@ def build_payloads(root: Path, date: str) -> dict[str, dict]:
             "sha256": sha256_file(path),
             "size_bytes": path.stat().st_size,
         }
+    try:
+        policy_ref = policy_path.relative_to(root).as_posix()
+    except ValueError:
+        policy_ref = str(policy_path)
+    pins["landscape_policy"] = {
+        "path": policy_ref,
+        "sha256": sha256_file(policy_path),
+        "size_bytes": policy_path.stat().st_size,
+    }
 
     # --- stamps -----------------------------------------------------------
     libraries = citybrief.load_stamp_libraries(root)
@@ -185,6 +218,8 @@ def build_payloads(root: Path, date: str) -> dict[str, dict]:
         roads=roads,
         karthgad_core=karthgad_core,
         live_remap=live_remap,
+        road_assignments=road_assignments,
+        road_class_by_hierarchy=hierarchy_map,
     )
     census = {
         "schema_version": 1,
@@ -578,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="temporary base for the determinism proof")
     parser.add_argument("--no-proof", action="store_true",
                         help="skip the double-build determinism proof")
+    parser.add_argument("--landscape-policy", default=DEFAULT_LANDSCAPE_POLICY,
+                        help="JSON policy defining road classes and hierarchy mapping")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -590,9 +627,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         print("Stage 1-3: census + assembly (build A)")
-        payloads_a = build_payloads(root, args.date)
+        payloads_a = build_payloads(root, args.date, args.landscape_policy)
         print("Stage 1-3: census + assembly (build B)")
-        payloads_b = build_payloads(root, args.date)
+        payloads_b = build_payloads(root, args.date, args.landscape_policy)
 
         with tempfile.TemporaryDirectory(
                 prefix="dbrief-build-",

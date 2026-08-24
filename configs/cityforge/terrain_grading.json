@@ -1,0 +1,26 @@
+{
+  "minimum_graded_land_height_gu": 64.0,
+  "gate_platform": {
+    "approach_length_gu": 2048.0,
+    "blend_margin_gu": 1536.0,
+    "enabled": true,
+    "half_length_along_road_gu": 1024.0,
+    "half_width_across_road_gu": 512.0,
+    "max_cut_fill_gu": 1024.0,
+    "max_road_grade": 0.125,
+    "sample_spacing_gu": 128.0
+  },
+  "road_grading": {
+    "blend_margin_gu": 768.0,
+    "cross_section_extension_gu": 384.0,
+    "enabled": true,
+    "max_cut_fill_gu": 1024.0,
+    "profile_sample_spacing_gu": 128.0,
+    "smoothing_window_gu": 2048.0
+  },
+  "wall_foundation": {
+    "blend_margin_gu": 2048.0,
+    "enabled": true,
+    "max_cut_fill_gu": 2048.0
+  }
+}

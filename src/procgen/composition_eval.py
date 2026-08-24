@@ -1,37 +1,40 @@
 """Pure deterministic evaluation of authored Cityforge composition intent.
 
-Purpose
--------
-Measure the narrow v1 road and lot-group relationships that an authored intent
-declares.  This module is observational: it never projects geometry, selects a
-candidate, mutates a domain, or invents a road, lot, target, or stamp.
+Purpose and pipeline position
+------------------------------
+This pure relational stage runs at complete candidate assignments during
+frontage-fit feasibility/improvement and supplies the final report before
+``plan_sketch.py`` rendering or TES3 authoring.  It is observational: it never
+projects geometry, selects a candidate, mutates a domain, or invents a road,
+lot, target, or stamp.  All measurements use supplied world-GU facts rather
+than renderer coordinates or inferred semantic choices.
 
 Inputs
 ------
-``evaluate_composition`` consumes normalized intent data and the selected
-world-GU fact rows materialized by the frontage-fit stage.  Each fact row must
-use the exact contract documented by :func:`evaluate_composition` below.
+``evaluate_composition`` consumes normalized intent and selected fact rows with
+exactly eight keys: ``lot_id``, ``centroid``, ``intentional_outlier``,
+``primary_target_id``, ``target_arc_gu``, ``target_length_gu``,
+``frontage_side``, and ``plaza_angle_deg``.  The arc is a canonical increasing
+target projection and is only clamped to its supplied target length; the
+evaluator does not recompute it.
 
-Outputs
--------
-The evaluator returns a canonical JSON-ready mapping with ``roads``, ``groups``,
-and ``findings`` arrays.  Metrics and findings are sorted by authored ids and
-contain only finite numbers, strings, booleans, ``None``, lists, and mappings.
-The preference helper returns only the four fixed, deterministic v1 preference
-components; it does not score marker displacement or assignment identity.
+Outputs and invariants
+----------------------
+The evaluator returns canonical JSON-ready ``roads``, ``groups``, and
+``findings`` arrays containing road support intervals and group span, gap,
+order, side-run, plaza-sector, medoid, and non-outlier metrics.  It also emits
+the exact repeated-adjacent-gap count used by the irregular-group preference.
+The frontage fitter treats all nine authored finding codes as hard complete-
+assignment gates; the evaluator itself remains a pure measurement function.
+``composition_preference_components`` returns only the four fixed evaluator
+profiles/counts and does not include marker displacement or assignment
+identity, which are frontage-fit facts.
 
-Invariants
-----------
-Facts are immutable inputs; every selected lot occurs at most once; target
+The input facts are immutable; every selected lot occurs at most once; target
 lengths for one target agree within ``EPSILON_GU``; all authored group members
 have exactly one selected fact; and every relationship measurement is computed
-from supplied facts rather than inferred from centroid coordinates.
-
-Pipeline position
-------------------
-This is the pure relational stage after frontage-fit candidate selection and
-before reporting, rendering, or TES3 authoring.  It deliberately has no
-project, renderer, terrain, filesystem, or search dependency.
+from supplied facts rather than inferred from centroid coordinates.  The
+module has no project, renderer, terrain, filesystem, or search dependency.
 """
 
 from __future__ import annotations

@@ -1,0 +1,82 @@
+"""CLI to project parcel frontage arcs and build the access graph.
+
+Purpose
+-------
+Consume a Phase 16 ``parcels.json``, rewrite frontages as centerline
+arcs, and prove every required parcel reaches a regional approach.
+Writes ``frontage.json``.
+
+Pipeline position
+-----------------
+V2 townlayout Phase 17; no stamp seating/VTEX.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from procgen.townlayout.frontage import assign_frontages  # noqa: E402
+from procgen.townlayout.parcels import write_parcels_diagnostic  # noqa: E402
+from procgen.townlayout.site_context import (  # noqa: E402
+    build_site_context,
+    resolve_topdown_png,
+)
+from procgen.townlayout.validate import TownLayoutError  # noqa: E402
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Project V2 parcel frontages")
+    parser.add_argument("--parcels", required=True)
+    parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--survey", default="")
+    parser.add_argument("--fields", default="")
+    parser.add_argument("--census", default="")
+    parser.add_argument("--brief", default="")
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    out_dir = Path(args.out_dir)
+    if out_dir.exists():
+        if not out_dir.is_dir() or any(out_dir.iterdir()):
+            print("FAILURE: townlayout out-dir not empty", file=sys.stderr)
+            return 1
+    else:
+        out_dir.mkdir(parents=True)
+    try:
+        product = json.loads(Path(args.parcels).read_text(encoding="utf-8"))
+        product = assign_frontages(product)
+    except TownLayoutError as exc:
+        print(f"FAILURE: townlayout {exc}", file=sys.stderr)
+        return 1
+    except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        print(f"FAILURE: townlayout {exc}", file=sys.stderr)
+        return 1
+    (out_dir / "frontage.json").write_text(
+        json.dumps(product, allow_nan=False) + "\n", encoding="utf-8")
+    if args.survey and args.fields and args.census and args.brief:
+        topdown = resolve_topdown_png(Path(args.survey))
+        if topdown is not None:
+            brief = json.loads(Path(args.brief).read_text(encoding="utf-8"))
+            ctx = build_site_context(
+                survey_json=Path(args.survey),
+                fields_npz=Path(args.fields),
+                census_json=Path(args.census),
+                town_brief=brief,
+            )
+            survey = json.loads(Path(args.survey).read_text(encoding="utf-8"))
+            write_parcels_diagnostic(
+                ctx, product, topdown_path=topdown, survey=survey,
+                out_png=out_dir / "frontage_diagnostic.png")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

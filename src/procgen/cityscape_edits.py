@@ -38,10 +38,24 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
-from .cityscape_field import FIELD_SIDE, FIELD_SPACING_GU, TargetBlock, outer_border_mask, split_field
+from .cityscape_field import FIELD_SPACING_GU, TargetBlock, outer_border_mask, split_field
 
 
-TARGET_SPAN_GU = (FIELD_SIDE - 1) * FIELD_SPACING_GU
+#: Falkreath 7x7 default span kept for import compatibility; edit geometry
+#: derives the real span from the actual field shape (any rectangular site).
+TARGET_SPAN_GU = (449 - 1) * FIELD_SPACING_GU
+
+#: Default field shape used by validate-only call sites that have no field
+#: array in hand (Falkreath 7x7).  apply_edit/compose_edits always pass the
+#: real shape from the field they are editing.
+_DEFAULT_FIELD_SHAPE = (449, 449)
+
+
+def _field_span_gu(field_shape: tuple[int, int]) -> tuple[float, float]:
+    """Return (span_x_gu, span_y_gu) for an (h, w) vertex field."""
+
+    height, width = field_shape
+    return (width - 1) * FIELD_SPACING_GU, (height - 1) * FIELD_SPACING_GU
 THU_TO_GU = 8.0
 MAX_DELTA_THU = 127
 MAX_DELTA_GU = MAX_DELTA_THU * THU_TO_GU
@@ -280,20 +294,22 @@ def _validate_support(
     edit: Mapping[str, Any],
     points: Sequence[tuple[float, float]],
     falloff: float,
+    field_shape: tuple[int, int] = _DEFAULT_FIELD_SHAPE,
 ) -> None:
     if falloff < 0.0 or not math.isfinite(falloff):
         raise _failure(edit, "invalid_falloff", "falloff must be finite and non-negative")
+    span_x_gu, span_y_gu = _field_span_gu(field_shape)
     min_x, min_y, max_x, max_y = _bounds(points, falloff)
     # The outermost target vertex is an immutable seam.  A support interval
     # touching it is rejected, even if the smoothstep would happen to be zero
     # at one particular floating-point sample.
-    if min_x <= 0.0 or min_y <= 0.0 or max_x >= TARGET_SPAN_GU or max_y >= TARGET_SPAN_GU:
+    if min_x <= 0.0 or min_y <= 0.0 or max_x >= span_x_gu or max_y >= span_y_gu:
         raise _failure(
             edit,
             "out_of_bounds",
             "edit shape plus falloff must be strictly inside the target field and immutable border",
             measured=[min_x, min_y, max_x, max_y],
-            limit=[0.0, 0.0, TARGET_SPAN_GU, TARGET_SPAN_GU],
+            limit=[0.0, 0.0, span_x_gu, span_y_gu],
         )
 
 
@@ -360,23 +376,27 @@ def _shape_and_blend(edit: Mapping[str, Any]) -> tuple[str, list[tuple[float, fl
     raise ValueError(f"unknown terrain edit kind {kind!r}")
 
 
-def _grid_coordinates() -> tuple[np.ndarray, np.ndarray]:
-    axis = np.arange(FIELD_SIDE, dtype=np.float64) * FIELD_SPACING_GU
-    x, y = np.meshgrid(axis, axis)
+def _grid_coordinates(field_shape: tuple[int, int] = _DEFAULT_FIELD_SHAPE) -> tuple[np.ndarray, np.ndarray]:
+    height, width = field_shape
+    x_axis = np.arange(width, dtype=np.float64) * FIELD_SPACING_GU
+    y_axis = np.arange(height, dtype=np.float64) * FIELD_SPACING_GU
+    x, y = np.meshgrid(x_axis, y_axis)
     return x, y
 
 
 def _support_mask(
     points: Sequence[tuple[float, float]],
     blend_function: Any,
+    field_shape: tuple[int, int] = _DEFAULT_FIELD_SHAPE,
 ) -> tuple[np.ndarray, np.ndarray]:
-    x_grid, y_grid = _grid_coordinates()
-    mask = np.zeros((FIELD_SIDE, FIELD_SIDE), dtype=bool)
-    blend = np.zeros((FIELD_SIDE, FIELD_SIDE), dtype=np.float64)
+    height, width = field_shape
+    x_grid, y_grid = _grid_coordinates(field_shape)
+    mask = np.zeros((height, width), dtype=bool)
+    blend = np.zeros((height, width), dtype=np.float64)
     min_x = max(0, int(math.floor(min(point[0] for point in points) / FIELD_SPACING_GU)) - 2)
-    max_x = min(FIELD_SIDE - 1, int(math.ceil(max(point[0] for point in points) / FIELD_SPACING_GU)) + 2)
+    max_x = min(width - 1, int(math.ceil(max(point[0] for point in points) / FIELD_SPACING_GU)) + 2)
     min_y = max(0, int(math.floor(min(point[1] for point in points) / FIELD_SPACING_GU)) - 2)
-    max_y = min(FIELD_SIDE - 1, int(math.ceil(max(point[1] for point in points) / FIELD_SPACING_GU)) + 2)
+    max_y = min(height - 1, int(math.ceil(max(point[1] for point in points) / FIELD_SPACING_GU)) + 2)
     for iy in range(min_y, max_y + 1):
         for ix in range(min_x, max_x + 1):
             value = float(blend_function((float(x_grid[iy, ix]), float(y_grid[iy, ix]))))
@@ -474,7 +494,7 @@ def _candidate_values(
                 raise ValueError(f"terrace shelf {shelf_index} polygon is invalid")
             shelf_target = _finite(shelf.get("target_height_gu"), f"terrace.shelves[{shelf_index}].target_height_gu")
             shelf_falloff = _finite(shelf.get("falloff_gu", edit.get("falloff_gu", 0.0)), f"terrace.shelves[{shelf_index}].falloff_gu")
-            shelf_mask, shelf_blend = _support_mask(polygon, lambda point, p=polygon, f=shelf_falloff: _blend_polygon(point, p, f))
+            shelf_mask, shelf_blend = _support_mask(polygon, lambda point, p=polygon, f=shelf_falloff: _blend_polygon(point, p, f), tuple(current.shape))
             result = result + shelf_blend * (shelf_target - result)
         return result
     elif kind == "road_grade":
@@ -488,8 +508,8 @@ def _candidate_values(
             raise ValueError("road grade percent must be non-negative")
         stations: list[float] = []
         heights: list[float] = []
-        for iy in range(FIELD_SIDE):
-            for ix in range(FIELD_SIDE):
+        for iy in range(current.shape[0]):
+            for ix in range(current.shape[1]):
                 corridor_blend, station = _blend_corridor(
                     (ix * FIELD_SPACING_GU, iy * FIELD_SPACING_GU), line, width / 2.0, _finite(edit.get("falloff_gu", 0.0), "road_grade.falloff_gu")
                 )
@@ -508,8 +528,8 @@ def _candidate_values(
         # this avoids a hidden vertical retarget while still enforcing grade.
         intercept = float(np.mean(z - slope * s))
         result = np.array(current, dtype=np.float64, copy=True)
-        for iy in range(FIELD_SIDE):
-            for ix in range(FIELD_SIDE):
+        for iy in range(current.shape[0]):
+            for ix in range(current.shape[1]):
                 corridor_blend, station = _blend_corridor(
                     (ix * FIELD_SPACING_GU, iy * FIELD_SPACING_GU), line, width / 2.0, _finite(edit.get("falloff_gu", 0.0), "road_grade.falloff_gu")
                 )
@@ -577,6 +597,7 @@ def validate_edit_request(
     *,
     known_links: set[str] | None = None,
     authorized_water_links: set[str] | None = None,
+    field_shape: tuple[int, int] = _DEFAULT_FIELD_SHAPE,
 ) -> list[dict[str, Any]]:
     """Return structured validation failures without mutating a field."""
 
@@ -588,7 +609,7 @@ def validate_edit_request(
             _validate_auto_pad(edit)
         shape_kind, points, falloff, _ = _shape_and_blend(edit)
         _ = shape_kind
-        _validate_support(edit, points, falloff)
+        _validate_support(edit, points, falloff, field_shape)
         if kind in {"flatten_shelf", "mound", "terrace"} and _finite(edit.get("target_height_gu", 1.0), "target_height_gu") < 0.0 and not _water_authorized(edit, linked, authorized_water_links):
             raise _failure(edit, "unintentional_basin", "edit target is below z=0 without an authorized dock/basin link", measured=edit.get("target_height_gu"), limit=0.0)
     except CityscapeEditError as exc:
@@ -622,18 +643,19 @@ def _minimum_required_falloff_estimate(
         trial["falloff_gu"] = value
         try:
             _, points, _, blend_function = _shape_and_blend(trial)
-            _validate_support(trial, points, value)
-            _, blend = _support_mask(points, blend_function)
+            _validate_support(trial, points, value, tuple(current.shape))
+            _, blend = _support_mask(points, blend_function, tuple(current.shape))
             possible = _candidate_values(trial, current, points, blend_function, blend)
             return bool(_encoded_delta_report(possible, cells)["legal"])
         except (CityscapeEditError, TypeError, ValueError):
             return False
 
+    max_span_gu = max(_field_span_gu(tuple(current.shape)))
     for _ in range(16):
         if legal_at(high):
             break
         high *= 2.0
-        if high >= TARGET_SPAN_GU:
+        if high >= max_span_gu:
             return None
     else:
         return None
@@ -659,18 +681,24 @@ def apply_edit(
     """Apply one primitive to a copy of the current field or raise structured failure."""
 
     selected_cells = tuple(cells or block.cells)
-    failures = validate_edit_request(edit, known_links=known_links, authorized_water_links=authorized_water_links)
+    current = np.asarray(current_values_gu, dtype=np.float64)
+    if current.ndim != 2 or not np.isfinite(current).all():
+        raise CityscapeEditError("edit input must be a finite 2D field")
+    field_shape = tuple(current.shape)
+    failures = validate_edit_request(
+        edit,
+        known_links=known_links,
+        authorized_water_links=authorized_water_links,
+        field_shape=field_shape,
+    )
     if failures:
         raise CityscapeEditError(failures[0])
     kind = str(edit.get("kind"))
     linked_to = _links(edit)
     _, points, falloff, blend_function = _shape_and_blend(edit)
-    support, blend = _support_mask(points, blend_function)
-    if np.any(support & outer_border_mask()):
+    support, blend = _support_mask(points, blend_function, field_shape)
+    if np.any(support & outer_border_mask(field_shape)):
         raise _failure(edit, "immutable_border", "edit support would alter the immutable outer border")
-    current = np.asarray(current_values_gu, dtype=np.float64)
-    if current.shape != (FIELD_SIDE, FIELD_SIDE) or not np.isfinite(current).all():
-        raise CityscapeEditError("edit input must be a finite 449x449 field")
     candidate = _candidate_values(edit, current, points, blend_function, blend)
     changed = support & (candidate != current)
     if kind == "road_grade" and edit.get("max_cut_fill_gu") is not None:
@@ -757,7 +785,7 @@ def quantize_once(
     values = np.asarray(values_gu, dtype=np.float64)
     source = np.asarray(source_values_gu, dtype=np.float64)
     quantized = _quantize_field(values)
-    border = outer_border_mask()
+    border = outer_border_mask(tuple(quantized.shape))
     if not np.array_equal(quantized[border], source[border]):
         location = np.argwhere(border & (quantized != source))[0]
         raise CityscapeEditError({
@@ -799,8 +827,8 @@ def compose_edits(
     """Apply edits in explicit deterministic order and quantize only at the end."""
 
     source = np.asarray(source_values_gu, dtype=np.float64)
-    if source.shape != (FIELD_SIDE, FIELD_SIDE) or not np.isfinite(source).all():
-        raise CityscapeEditError("source field must be finite 449x449 float64")
+    if source.ndim != 2 or not np.isfinite(source).all():
+        raise CityscapeEditError("source field must be finite 2D float64")
     current = np.array(source, dtype=np.float64, copy=True)
     edit_rows: list[Mapping[str, Any]] = []
     support_union = np.zeros_like(current, dtype=bool)
@@ -835,7 +863,7 @@ def compose_edits(
         "changed_vertex_count": int(np.count_nonzero(changed_union)),
         "outside_declared_support_exact": bool(np.array_equal(current[~support_union], source[~support_union])),
         "outside_declared_support_count": int(np.count_nonzero(~support_union)),
-        "outer_border_exact": bool(np.array_equal(current[outer_border_mask()], source[outer_border_mask()])),
+        "outer_border_exact": bool(np.array_equal(current[outer_border_mask(tuple(source.shape))], source[outer_border_mask(tuple(source.shape))])),
         "final_quantized_outside_support_exact": bool(np.array_equal(quantized[~support_union], _quantize_field(source)[~support_union])),
     }
     if not source_unchanged["outside_declared_support_exact"] or not source_unchanged["outer_border_exact"]:

@@ -14,6 +14,7 @@ dependencies = [
     "Pillow",
     "scipy",
     "scikit-image",
+    "shapely>=2.0",
 ]
 
 [project.optional-dependencies]

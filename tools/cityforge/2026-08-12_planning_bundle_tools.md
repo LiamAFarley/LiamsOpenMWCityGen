@@ -79,17 +79,37 @@ never drawn past the tile bounds (full id on two lines when needed).
 ## 2026-08-13 frontage-fit v1
 
 `fit_intent_sketch.py` consumes a strict authored intent (roads, spaces,
-districts, real eligible stamp ids, centroid markers, and explicit named door
-frontages) and writes `intent.copy.json`, `resolved.sketch.json`, and
-`fit_report.json` under one fresh output directory.  The pure search module is
-`src/procgen/frontage_fit.py`; it uses full-precision manifest-pinned stamp
-hulls/doors, exact target assignments, conservative 2D clearance, and a
-complete deterministic MRV/forward-check bitset search with a finite default
-1,000,000-node budget (first feasible assignment, not globally rank-optimal;
-see the frontage-fit v1 tool entry for the outcome mapping and metrics).  The
-resolved sketch is then rendered by the existing `plan_sketch.py` command.  Do
-**not** pass `--auto-face` to the resolved sketch: that legacy helper would
-overwrite the fitter's explicit target transform.  An unsatisfiable intent
-exits with `FAILURE: frontage_fit ...` and never emits a partial resolved lot
-set; exhausting the search budget is a third status, `inconclusive` with
-terminal code `search_budget_exhausted`, which never claims unsatisfiability.
+districts, real eligible stamp ids, centroid markers, explicit named door
+frontages, and optional composition declarations) and writes
+`intent.copy.json`, `resolved.sketch.json`, and `fit_report.json` under one
+fresh output directory.  Road composition declarations may provide `purpose`
+(`urban_street`, `service_lane`, or `connector`) and an optional
+`max_unsupported_frontage_gu` bound for the first two; lots may mark an
+`intentional_outlier`; and `lot_groups` support the five characters
+`compact_cluster`, `irregular_two_sided`, `formal_square`, `gateway_cluster`,
+and `sparse_outskirts`, with shared targets, span/gap/non-outlier/side-run
+bounds, authored along-order, and formal-square plaza sectors.
+
+The pure search module is `src/procgen/frontage_fit.py`.  It materializes the
+exact eight-key candidate fact contract consumed by
+`src/procgen/composition_eval.py`, whose road/group metrics feed all nine hard
+finding gates.  Composition intents retain all unary-feasible candidates for a
+complete deterministic proof: default passes widen 64 -> 128 -> 256 -> 512 ->
+the full retained domain, with a global default 1,000,000-node budget and
+truthful distinction between `global_collision_unsatisfied`,
+`global_relationship_unsatisfied`, and `search_budget_exhausted` (the last is
+`inconclusive`, never proof).  A no-composition intent keeps one capped 64-wide
+feasibility pass and does not run improvement.
+
+After composition feasibility succeeds, the separate improvement budget is
+50,000 nodes by default and `0` disables it.  It compares the fixed
+lexicographic objective only within the successful feasibility-pass domain;
+the hard-valid feasibility incumbent remains solved if improvement is disabled,
+exhausted, or faulted.  The full `improvement` report includes
+`faulted`/`fault_code` as well as domain, budget, traversal, rejection, and
+incumbent/selected-objective evidence.  This is not semantic stamp selection,
+road invention, or a global beauty score.  The resolved sketch is then
+rendered separately by `plan_sketch.py`; do **not** pass `--auto-face`, which
+would overwrite the fitter's explicit target transform.  An unsatisfied or
+inconclusive intent exits with `FAILURE: frontage_fit ...` and never emits a
+partial resolved lot set.

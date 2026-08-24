@@ -71,15 +71,15 @@ def sha256_file(path: Path | str) -> str:
     return digest.hexdigest()
 
 
-def _decode_mask(value: str, side: int, dtype: np.dtype = np.uint8) -> np.ndarray:
+def _decode_mask(value: str, shape: tuple[int, int], dtype: np.dtype = np.uint8) -> np.ndarray:
     try:
         raw = base64.b64decode(value, validate=True)
     except Exception as exc:  # noqa: BLE001 - convert to input-contract error
         raise TerrainBundleError(f"invalid base64 mask: {exc}") from exc
-    expected = side * side * np.dtype(dtype).itemsize
+    expected = shape[0] * shape[1] * np.dtype(dtype).itemsize
     if len(raw) != expected:
         raise TerrainBundleError(f"mask bytes {len(raw)} != expected {expected}")
-    return np.frombuffer(raw, dtype=dtype).reshape((side, side)).copy()
+    return np.frombuffer(raw, dtype=dtype).reshape(shape).copy()
 
 
 def _finite_pair(value: Any, label: str) -> tuple[float, float]:
@@ -293,27 +293,39 @@ class TerrainBundle:
                 archive.close()  # type: ignore[union-attr]
             except (NameError, AttributeError):
                 pass
+        frame = survey.get("frame")
+        if not isinstance(frame, Mapping) or frame.get("field_spacing_gu") != FIELD_SPACING_GU:
+            raise TerrainBundleError("survey field spacing is not the accepted 128 GU")
+        target = survey.get("target_cells")
+        if not isinstance(target, Mapping):
+            raise TerrainBundleError("site survey has no target_cells block")
+        cells_x = int(target["max_x"]) - int(target["min_x"]) + 1
+        cells_y = int(target["max_y"]) - int(target["min_y"]) + 1
+        field_shape = (cells_y * 64 + 1, cells_x * 64 + 1)
+        tile_shape = (cells_y * 16, cells_x * 16)
         expected = {
-            "height_gu": (FIELD_SIDE, FIELD_SIDE),
-            "slope_deg": (FIELD_SIDE, FIELD_SIDE),
-            "water_distance_gu": (FIELD_SIDE, FIELD_SIDE),
-            "water_vertices": (FIELD_SIDE, FIELD_SIDE),
-            "raw_vtex_tiles": (TILE_SIDE, TILE_SIDE),
+            "height_gu": field_shape,
+            "slope_deg": field_shape,
+            "water_distance_gu": field_shape,
+            "water_vertices": field_shape,
+            "raw_vtex_tiles": tile_shape,
         }
         for key, shape in expected.items():
             if arrays[key].shape != shape:
                 raise TerrainBundleError(f"{key} shape {arrays[key].shape} != {shape}")
             if not np.isfinite(arrays[key]).all():
                 raise TerrainBundleError(f"{key} contains non-finite values")
-        frame = survey.get("frame")
-        if not isinstance(frame, Mapping) or frame.get("field_spacing_gu") != FIELD_SPACING_GU:
-            raise TerrainBundleError("survey field spacing is not the accepted 128 GU")
         tile_grids = survey.get("tile_grids")
-        if not isinstance(tile_grids, Mapping) or tile_grids.get("side") != TILE_SIDE:
-            raise TerrainBundleError("survey tile grid is not the accepted 112x112 grid")
-        water_mask = _decode_mask(str(tile_grids["water_mask"]), TILE_SIDE)
-        buildable_mask = _decode_mask(str(tile_grids["buildable_mask"]), TILE_SIDE)
-        road_mask = _decode_mask(str(tile_grids["road_mask"]), TILE_SIDE)
+        if not isinstance(tile_grids, Mapping):
+            raise TerrainBundleError("site survey has no tile_grids block")
+        declared_sides = tile_grids.get("sides", [tile_grids.get("side"), tile_grids.get("side")])
+        if [int(declared_sides[0]), int(declared_sides[1])] != [tile_shape[0], tile_shape[1]]:
+            raise TerrainBundleError(
+                f"survey tile grid sides {declared_sides} disagree with the {cells_x}x{cells_y} cell block"
+            )
+        water_mask = _decode_mask(str(tile_grids["water_mask"]), tile_shape)
+        buildable_mask = _decode_mask(str(tile_grids["buildable_mask"]), tile_shape)
+        road_mask = _decode_mask(str(tile_grids["road_mask"]), tile_shape)
         if int(np.count_nonzero(road_mask)) != int(survey["stats"]["road_tiles_78"]):
             raise TerrainBundleError("survey road mask/count provenance mismatch")
         return cls(
@@ -372,13 +384,15 @@ class TerrainBundle:
 
     def water_at(self, x: float, y: float) -> bool:
         fx, fy = self._field_xy(float(x), float(y))
-        ix = min(FIELD_SIDE - 1, max(0, int(round(fx))))
-        iy = min(FIELD_SIDE - 1, max(0, int(round(fy))))
+        field_h, field_w = self.water_vertices.shape
+        ix = min(field_w - 1, max(0, int(round(fx))))
+        iy = min(field_h - 1, max(0, int(round(fy))))
         return bool(self.water_vertices[iy, ix])
 
     def tile_at(self, x: float, y: float) -> tuple[int, int, int]:
-        tx = min(TILE_SIDE - 1, max(0, int(math.floor(float(x) / TILE_SIZE_GU))))
-        ty = min(TILE_SIDE - 1, max(0, int(math.floor(float(y) / TILE_SIZE_GU))))
+        tile_h, tile_w = self.raw_vtex_tiles.shape
+        tx = min(tile_w - 1, max(0, int(math.floor(float(x) / TILE_SIZE_GU))))
+        ty = min(tile_h - 1, max(0, int(math.floor(float(y) / TILE_SIZE_GU))))
         return tx, ty, int(self.raw_vtex_tiles[ty, tx])
 
     def tile_buildable(self, x: float, y: float) -> bool:
@@ -451,11 +465,13 @@ class TerrainBundle:
         fy = yy / FIELD_SPACING_GU
         heights = _bilinear_grid(self.height_gu, fx, fy)
         slopes = _bilinear_grid(self.slope_deg, fx, fy)
-        water_x = np.clip(np.rint(fx).astype(np.int64), 0, FIELD_SIDE - 1)
-        water_y = np.clip(np.rint(fy).astype(np.int64), 0, FIELD_SIDE - 1)
+        field_h, field_w = self.height_gu.shape
+        tile_h, tile_w = self.raw_vtex_tiles.shape
+        water_x = np.clip(np.rint(fx).astype(np.int64), 0, field_w - 1)
+        water_y = np.clip(np.rint(fy).astype(np.int64), 0, field_h - 1)
         water = self.water_vertices[water_y, water_x].astype(bool)
-        raw_x = np.clip(np.floor(xx / TILE_SIZE_GU).astype(np.int64), 0, TILE_SIDE - 1)
-        raw_y = np.clip(np.floor(yy / TILE_SIZE_GU).astype(np.int64), 0, TILE_SIDE - 1)
+        raw_x = np.clip(np.floor(xx / TILE_SIZE_GU).astype(np.int64), 0, tile_w - 1)
+        raw_y = np.clip(np.floor(yy / TILE_SIZE_GU).astype(np.int64), 0, tile_h - 1)
         raw_nearest = self.raw_vtex_tiles[raw_y, raw_x]
         # Bilinear material interpolation.  Sampling the palette at tile
         # centres deliberately feathers class changes instead of drawing 512-GU
@@ -536,8 +552,9 @@ class TerrainBundle:
 
     def _default_contours(self, rectangle: PlanningRectangle) -> list[float]:
         x0, y0, x1, y1 = rectangle.render_bounds_gu
-        ix0, ix1 = max(0, int(math.floor(x0 / FIELD_SPACING_GU))), min(FIELD_SIDE - 1, int(math.ceil(x1 / FIELD_SPACING_GU)))
-        iy0, iy1 = max(0, int(math.floor(y0 / FIELD_SPACING_GU))), min(FIELD_SIDE - 1, int(math.ceil(y1 / FIELD_SPACING_GU)))
+        field_h, field_w = self.height_gu.shape
+        ix0, ix1 = max(0, int(math.floor(x0 / FIELD_SPACING_GU))), min(field_w - 1, int(math.ceil(x1 / FIELD_SPACING_GU)))
+        iy0, iy1 = max(0, int(math.floor(y0 / FIELD_SPACING_GU))), min(field_h - 1, int(math.ceil(y1 / FIELD_SPACING_GU)))
         low = float(np.min(self.height_gu[iy0:iy1 + 1, ix0:ix1 + 1]))
         high = float(np.max(self.height_gu[iy0:iy1 + 1, ix0:ix1 + 1]))
         start = math.floor(low / 500.0) * 500.0
@@ -560,10 +577,11 @@ class TerrainBundle:
         """Draw labelled marching-squares contours from exact field heights."""
 
         x0, y0, x1, y1 = rectangle.render_bounds_gu
+        field_h, field_w = self.height_gu.shape
         ix0 = max(0, int(math.floor(x0 / FIELD_SPACING_GU)))
-        ix1 = min(FIELD_SIDE - 2, int(math.ceil(x1 / FIELD_SPACING_GU)))
+        ix1 = min(field_w - 2, int(math.ceil(x1 / FIELD_SPACING_GU)))
         iy0 = max(0, int(math.floor(y0 / FIELD_SPACING_GU)))
-        iy1 = min(FIELD_SIDE - 2, int(math.ceil(y1 / FIELD_SPACING_GU)))
+        iy1 = min(field_h - 2, int(math.ceil(y1 / FIELD_SPACING_GU)))
         # Explicitly list the ambiguous marching-squares cases so the hot loop
         # stays simple and deterministic.
         table: dict[int, list[tuple[tuple[float, float], tuple[float, float]]]] = {

@@ -21,7 +21,9 @@ is jittered, then gated in order:
 2. water: terrain below the 0-THU water plane is rejected,
 3. ``fMinHeight`` / ``fMaxHeight`` elevation window,
 4. ``fMaximumAngle`` slope cap (max of 8 neighbour gradients at 128 GU),
-5. raw VTEX 0 (base/unpainted tiles) is rejected,
+5. water is rejected unless the matched texture is explicitly listed in the
+   run's ``water_flora_texture_ids``; raw VTEX 0 (base/unpainted tiles) is
+   rejected,
 6. the tile's LTEX record id must match a palette section for the run region,
 7. texture bans: any ban substring in the LTEX record id or texture path, and
    any configured road-path regex against the texture path; bans with a
@@ -90,6 +92,8 @@ from procgen.groundcover_ini import (
 )
 from procgen.scatter_analysis import terrain_slope_deg, texture_at_position
 from procgen.seeds import derive_seed
+from .clearing_index import ClearingIndex, MultiClearingIndex, build_clearing_index
+from .region_scope import region_cells
 
 TOOL_NAME = "procgen.groundcover_generate"
 TOOL_VERSION = "1.0.0"
@@ -411,11 +415,16 @@ class GroundcoverRunConfig:
     region: str
     ini_path: str | Path
     land_plugin: str | Path
+    scope_region_map: str | Path | None = None
+    scope_region_id: str | None = None
+    scope_pixels_per_cell: float = 64.0
     master_name: str = ""
     mesh_roots: tuple[str | Path, ...] = ()
     scatter_exclusions: str | Path | None = None
     settlements_json: str | Path | None = None
     settlement_radius_gu: float = 1400.0
+    clearing_json: str | Path | tuple[Path, ...] | None = None
+    edited_land_json: str | Path | None = None
     exclusion_rules: tuple[StaticExclusionRule, ...] = DEFAULT_EXCLUSION_RULES
     default_exclusion_radius_gu: float = 150.0
     exclusion_margin_gu: float = DEFAULT_EXCLUSION_MARGIN_GU
@@ -426,6 +435,8 @@ class GroundcoverRunConfig:
         ".*gravel.*",
         ".*beatenpath.*",
     )
+    road_raw_vtex_values: tuple[int, ...] = ()
+    water_flora_texture_ids: tuple[str, ...] = ()
     extra_banned_textures: tuple[str, ...] = ()
     jitter_gu: float | None = None
     z_modifier_gu: float | None = None
@@ -481,12 +492,27 @@ def config_from_mapping(values: Mapping[str, Any]) -> GroundcoverRunConfig:
             raise ValueError("groundcover config: 'exclusion_rules' must be a list")
         rules = tuple(rule_from_mapping(rule) for rule in rules_raw)
 
+    scope = values.get("scope")
+    scope_region_map = None
+    scope_region_id = None
+    scope_pixels_per_cell = 64.0
+    if scope is not None:
+        if not isinstance(scope, Mapping):
+            raise ValueError("groundcover config: 'scope' must be an object")
+        if not isinstance(scope.get("region_map"), str) or not isinstance(scope.get("region_id"), str):
+            raise ValueError("groundcover config: scope requires region_map and region_id")
+        scope_region_map = str(scope["region_map"])
+        scope_region_id = str(scope["region_id"])
+        scope_pixels_per_cell = float(scope.get("map_pixels_per_cell", 64.0))
     seed = expect("master_seed", int)
     return GroundcoverRunConfig(
         area=area,
         version=version,
         master_seed=int(seed),
         bounds=bounds,
+        scope_region_map=scope_region_map,
+        scope_region_id=scope_region_id,
+        scope_pixels_per_cell=scope_pixels_per_cell,
         region=str(expect("region", str)),
         ini_path=Path(str(expect("ini_path", str))),
         land_plugin=Path(str(expect("land_plugin", str))),
@@ -499,10 +525,20 @@ def config_from_mapping(values: Mapping[str, Any]) -> GroundcoverRunConfig:
             Path(str(values["settlements_json"])) if values.get("settlements_json") else None
         ),
         settlement_radius_gu=float(values.get("settlement_radius_gu", 1400.0)),
+        clearing_json=(
+            tuple(Path(str(item)) for item in values["clearing_json"])
+            if isinstance(values.get("clearing_json"), list)
+            else (Path(str(values["clearing_json"])) if values.get("clearing_json") else None)
+        ),
+        edited_land_json=(
+            Path(str(values["edited_land_json"])) if values.get("edited_land_json") else None
+        ),
         exclusion_rules=rules,
         default_exclusion_radius_gu=float(values.get("default_exclusion_radius_gu", 150.0)),
         exclusion_margin_gu=float(values.get("exclusion_margin_gu", DEFAULT_EXCLUSION_MARGIN_GU)),
         road_texture_regexes=tuple(str(item) for item in values.get("road_texture_regexes", ())),
+        road_raw_vtex_values=tuple(int(item) for item in values.get("road_raw_vtex_values", ())),
+        water_flora_texture_ids=tuple(str(item) for item in values.get("water_flora_texture_ids", ())),
         extra_banned_textures=tuple(str(item) for item in values.get("extra_banned_textures", ())),
         jitter_gu=(
             float(values["jitter_gu"]) if values.get("jitter_gu") is not None else None
@@ -669,9 +705,23 @@ def generate_groundcover_document(
     config: GroundcoverRunConfig,
     ini: GroundcoverIni,
 ) -> dict[str, Any]:
-    """Load the terrain plugin and run one deterministic generation pass."""
+    """Load the terrain plugin and run one deterministic generation pass.
+
+    When ``config.edited_land_json`` is set, the base ``config.land_plugin``
+    LAND is loaded first and the affected cells' records are replaced by the
+    city generation's edited-LAND JSON (a tes3conv document) directly — no
+    ESP conversion.  Outside the affected cells the base LAND is used as-is.
+    """
 
     land_records = load_land(config.land_plugin)
+    if config.edited_land_json is not None:
+        from procgen.tes3json import land_records_from_json  # noqa: E402
+
+        edited_doc = _read_json_document(config.edited_land_json)
+        edited_records = land_records_from_json(edited_doc)
+        merged = dict(land_records)
+        merged.update(edited_records)
+        land_records = merged
     ltex = load_ltex(config.land_plugin)
     return generate_groundcover_document_with_land(config, ini, land_records, ltex)
 
@@ -738,6 +788,16 @@ def generate_groundcover_document_with_land(
         for circle in circles:
             exclusion_index.add_circle(circle)
 
+    clearing_index: ClearingIndex | MultiClearingIndex | None = None
+    if config.clearing_json is not None:
+        clearing_paths = (
+            [Path(p) for p in config.clearing_json]
+            if isinstance(config.clearing_json, (list, tuple))
+            else [Path(config.clearing_json)]
+        )
+        clearing_docs = [_read_json_mapping(path) for path in clearing_paths]
+        clearing_index = build_clearing_index(clearing_docs)
+
     road_regexes = tuple(re.compile(pattern, re.IGNORECASE) for pattern in config.road_texture_regexes)
     z_modifier = (
         config.z_modifier_gu
@@ -746,6 +806,17 @@ def generate_groundcover_document_with_land(
     )
 
     (min_x, min_y), (max_x, max_y) = config.bounds
+    scope_cells: set[tuple[int, int]] | None = None
+    scope_metadata: dict[str, Any] | None = None
+    if config.scope_region_map is not None and config.scope_region_id is not None:
+        scope_cells, scope_metadata = region_cells(
+            config.scope_region_map,
+            config.scope_region_id,
+            pixels_per_cell=config.scope_pixels_per_cell,
+        )
+        outside = [cell for cell in scope_cells if not (min_x <= cell[0] <= max_x and min_y <= cell[1] <= max_y)]
+        if outside:
+            raise ValueError(f"groundcover scope extends outside configured bounds: {outside[:8]}")
     cells: list[dict[str, Any]] = []
     global_audit = _Audit()
     generated_cells = 0
@@ -754,6 +825,8 @@ def generate_groundcover_document_with_land(
         if config.limit_cells is not None and generated_cells >= config.limit_cells:
             break
         for gy in range(min_y, max_y + 1):
+            if scope_cells is not None and (gx, gy) not in scope_cells:
+                continue
             if config.limit_cells is not None and generated_cells >= config.limit_cells:
                 break
             generated_cells += 1
@@ -785,6 +858,7 @@ def generate_groundcover_document_with_land(
                         road_regexes=road_regexes,
                         z_modifier=z_modifier,
                         exclusion_index=exclusion_index,
+                        clearing_index=clearing_index,
                         rng=cell_rng,
                         gx=gx,
                         gy=gy,
@@ -807,22 +881,26 @@ def generate_groundcover_document_with_land(
             "seeded_by": "procgen.seeds.derive_seed",
             "scope": ["groundcover", config.area, config.version, "cell", "gx", "gy"],
         },
-        "scope": {
+            "scope": {
             "area": config.area,
             "version": config.version,
             "bounds": [list(bounds) for bounds in config.bounds],
             "region": config.region,
             "cell_count": len(cells),
-            "cells": [[gx, gy] for gx in range(min_x, max_x + 1) for gy in range(min_y, max_y + 1)],
+            "cells": [[int(row["grid"][0]), int(row["grid"][1])] for row in cells],
+            "region_scope": scope_metadata,
         },
         "units": {"cell_size_gu": CELL_SIZE_GAME_UNITS, "thu_to_gu": THU_TO_GU},
         "terrain": {
             "land_plugin": str(config.land_plugin),
+            "edited_land_json": str(config.edited_land_json) if config.edited_land_json else None,
             "water_threshold_thu": config.water_threshold_thu,
         },
         "palette": {texture: spec.describe() for texture, spec in sorted(palette.items())},
         "masks": {
             "road_texture_regexes": list(config.road_texture_regexes),
+            "road_raw_vtex_values": list(config.road_raw_vtex_values),
+            "water_flora_texture_ids": list(config.water_flora_texture_ids),
             "extra_banned_textures": list(config.extra_banned_textures),
             "water": {"threshold_thu": config.water_threshold_thu},
         },
@@ -838,6 +916,22 @@ def generate_groundcover_document_with_land(
                 for rule in config.exclusion_rules
             ],
             "margin_gu": config.exclusion_margin_gu,
+        },
+        "city_clearing": {
+            "enabled": clearing_index is not None,
+            "clearing_json": str(config.clearing_json) if config.clearing_json else None,
+            "frame_origin_gu": (
+                [list(o) for o in clearing_index.frame_origins_gu] if hasattr(clearing_index, "frame_origins_gu")
+                else list(clearing_index.frame_origin_gu)
+            ) if clearing_index is not None else None,
+            "blocks_point_rejections": int(global_audit.rejected.get("clearing_blocked", 0)),
+            "rule": (
+                "groundcover candidates are rejected inside building footprints, "
+                "circulation surfaces, and road corridors via "
+                "ClearingIndex.blocks_point; city_domain does NOT block "
+                "groundcover (grassy in-town tiles keep grass); scatter statics "
+                "are excluded through the existing ExclusionIndex"
+            ),
         },
         "density": {"cells": cells, "placement_stats": _placement_stats(cells, global_audit)},
         "generation_failures": [],
@@ -889,6 +983,7 @@ def _evaluate_candidate(
     road_regexes: Sequence[re.Pattern[str]],
     z_modifier: float,
     exclusion_index: ExclusionIndex,
+    clearing_index: ClearingIndex | None,
     rng: random.Random,
     gx: int,
     gy: int,
@@ -901,10 +996,6 @@ def _evaluate_candidate(
         audit.reject("no_terrain")
         return None
     terrain_gu = float(terrain_thu) * THU_TO_GU
-    if terrain_gu <= config.water_threshold_thu * THU_TO_GU:
-        audit.reject("water")
-        return None
-
     texture = _texture_at(land_records, ltex, (x_gu, y_gu))
     if texture is None:
         audit.reject("unmatched_texture")
@@ -912,8 +1003,14 @@ def _evaluate_candidate(
     raw_vtex = int(texture["raw_vtex"])
     texture_name = str(texture["name"])
     texture_path = str(texture["path"])
+    if terrain_gu <= config.water_threshold_thu * THU_TO_GU and texture_name not in config.water_flora_texture_ids:
+        audit.reject("water")
+        return None
     if raw_vtex == 0:
         audit.reject("base_texture")
+        return None
+    if raw_vtex in config.road_raw_vtex_values:
+        audit.reject(ROAD_REJECT)
         return None
     # Road mask first: a road tile is rejected even when its texture happens
     # to be a palette key, and the audit counts the mask separately.
@@ -953,6 +1050,9 @@ def _evaluate_candidate(
     blocked, blocker = exclusion_index.is_blocked(x_gu, y_gu, (gx, gy))
     if blocked:
         audit.reject("static_exclusion" if blocker.startswith("static") else "settlement_exclusion")
+        return None
+    if clearing_index is not None and clearing_index.blocks_point(x_gu, y_gu):
+        audit.reject("clearing_blocked")
         return None
 
     mesh = _choose_mesh(active.options, rng)
@@ -1114,6 +1214,17 @@ def _read_json_mapping(path: str | Path) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"JSON document is not an object: {path}")
     return value
+
+
+def _read_json_document(path: str | Path) -> Any:
+    """Read any JSON document (object or list, e.g. a tes3conv record list)."""
+
+    import json
+
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read JSON {path}: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

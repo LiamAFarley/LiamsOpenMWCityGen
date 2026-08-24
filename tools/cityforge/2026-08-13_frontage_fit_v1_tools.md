@@ -101,43 +101,140 @@ the primary polyline target a building fronts:
   still deduplicate by rounded `(centroid_x, centroid_y, yaw)` before unary
   evaluation.
 
-## 2026-08-13 — complete deterministic search (replaces the beam)
+## 2026-08-13 — deterministic composition closure
 
-The global selector is a complete deterministic MRV/forward-check search over
-immutable candidate-domain bitsets in `src/procgen/frontage_fit.py`; there is
-no beam, no width, and no state cap.  Lot order is `(unary domain size, lot
-id)`; candidate values iterate ascending capped `unary_feasible` position,
-which preserves the existing `(candidate.rank, candidate.ordinal)` preference.
+Composition is enabled when the normalized intent declares `lot_groups`, a
+road `purpose`, or a lot `intentional_outlier`.  It remains authored data: the
+solver does not choose semantic roles, invent roads/spaces/targets/stamps, or
+claim a universal beauty score.
 
-- **Budget.**  `FitConfig.search_node_budget`, finite default `1_000_000`
-  nodes; `0` means unlimited.  A positive budget caps recursive search-state
-  calls and raises at the search boundary, so exhaustion can never fall
-  through to an unsatisfiable conclusion.  The production default stays
-  finite; a budget-exhausted run is a valid stop that needs a separate lead
-  decision before any unlimited diagnostic rerun.
-- **Outcome mapping.**  Unary failure -> `unsatisfied` /
-  `unary_unsatisfied`; exhaustive proof of no complete assignment ->
-  `unsatisfied` / `global_collision_unsatisfied`; node budget reached ->
-  `inconclusive` / `search_budget_exhausted`; complete assignment found ->
-  `solved`.  The two failure statuses both emit an empty resolved lot set and
-  list every lot id in `unresolved_lot_ids`; status and terminal code
-  distinguish proof from inconclusion.
-- **Report metrics.**  `search_counts` (and the same keys mirrored at the top
-  level) are `search_nodes`, `search_extensions`, `compatibility_checks`
-  (one `_rings_conflict` call per unordered candidate pair), and
-  `search_backtracks`, plus the existing `candidate_generated` /
-  `candidate_deduplicated` / `candidate_unary_feasible` and the boolean
-  `search_budget_exhausted`.  The retired `states_expanded` and
-  `beam_truncations` fields are gone, with no aliases.
-- **Limitations.**  The solver is complete (a complete collision-free
-  assignment is found whenever one exists and the budget is not exhausted),
-  but the reported assignment is the first deterministic feasible one, not a
-  globally rank-optimal one:
-  `complete MRV/forward-check search returns the first deterministic feasible
-  assignment, not a globally rank-optimal assignment`.
-  Budget exhaustion is inconclusive, never proof of impossibility:
-  `search_budget_exhausted is inconclusive and never proves geometric
-  unsatisfiability`.
-  The search recurses one Python frame per assigned lot; exceptionally large
-  intents approaching the interpreter's recursion limit require partitioning
-  (the limit is platform-dependent).
+### Authored vocabulary
+
+- A road may optionally declare `purpose`: `urban_street`, `service_lane`, or
+  `connector`.  `max_unsupported_frontage_gu` is optional and is legal only
+  for `urban_street` or `service_lane`; it is finite and non-negative.  The
+  legacy road `kind` is not converted into a purpose.
+- A lot may optionally declare a real boolean `intentional_outlier`.  It
+  excludes that lot only from the group's non-outlier-to-medoid distance
+  metric; it does not remove the lot from span, order, side-run, road support,
+  or plaza-sector measurements.
+- `lot_groups` contain a unique `id`, one of `compact_cluster`,
+  `irregular_two_sided`, `formal_square`, `gateway_cluster`, or
+  `sparse_outskirts`, and non-empty unique `lot_ids`.  Lots cannot overlap
+  groups.  Optional declarations are `shared_target_id`,
+  `max_span_gu`, `max_consecutive_gap_gu`,
+  `max_non_outlier_distance_gu`, positive-integer
+  `max_consecutive_same_side`, and `along_order`.
+- Group lot ids and group ids are normalized deterministically; `along_order`
+  must be an exact permutation of the group members and retains its authored
+  sequence.  `plaza_sectors` is allowed only for `formal_square` groups with a
+  shared target; sector ids are unique and each range satisfies
+  `0 <= start_deg < end_deg <= 360`.  Sector rows are sorted by id.
+
+### Evaluator fact and metric contract
+
+At each complete candidate assignment the fitter materializes exactly these
+eight evaluator fact keys: `lot_id`, `centroid`, `intentional_outlier`,
+`primary_target_id`, `target_arc_gu`, `target_length_gu`, `frontage_side`, and
+`plaza_angle_deg`.  The arc is the canonical increasing-path projection and is
+clamped only to the supplied target length; the evaluator never reprojects a
+centroid or reconstructs a target.
+
+The pure evaluator emits road length, serving-lot count, ordered projected
+frontage positions, unsupported intervals, longest unsupported interval, and
+authored excess.  Group output includes centroid span, actual along-target
+order and gaps, maximum gap, order violation, same-side run, plaza-sector
+occupancy, medoid id, non-outlier maximum distance, all corresponding excess
+values, and `repeated_consecutive_gap_pair_count` for exact adjacent-gap
+repetitions.  Findings are canonical and deterministic.
+
+The nine finding codes treated as authored hard relationship gates are:
+
+```text
+road_unsupported_frontage_exceeded
+group_shared_target_mismatch
+along_order_violation
+plaza_sector_unoccupied
+group_span_exceeded
+group_gap_exceeded
+group_gap_unmeasurable
+group_same_side_run_exceeded
+group_non_outlier_distance_exceeded
+```
+
+### Complete composition proof
+
+`candidate_count_unary_feasible` is the configured rank-best capped prefix;
+`candidate_unary_feasible_all` counts the complete retained unary-feasible
+domain.  Composition search does not call the capped prefix a proof.  With the
+default cap, it runs complete deterministic MRV/forward-checking passes at
+domain widths **64, 128, 256, 512, and full retained domain**.  A narrower
+width than the configured cap, or a width that produces the same domain-size
+vector, is skipped.  Each pass uses immutable compatibility bitsets, lot order
+`(domain size, lot id)`, and ascending domain positions.  A hard finding at a
+collision-valid leaf rejects that assignment and exhaustive backtracking
+continues.
+
+`FitConfig.search_node_budget` is global across all widening passes (default
+`1_000_000`; `0` means unlimited).  The terminal meanings are deliberately
+truthful:
+
+- no unary-feasible candidate: `unsatisfied` / `unary_unsatisfied`;
+- no collision-valid complete assignment after the full retained-domain proof:
+  `unsatisfied` / `global_collision_unsatisfied`;
+- collision-valid assignments exist, but every one is rejected by the nine
+  authored relationship gates: `unsatisfied` /
+  `global_relationship_unsatisfied`;
+- the shared node budget is reached before proof: `inconclusive` /
+  `search_budget_exhausted`, never an impossibility claim.
+
+Unsolved and inconclusive outcomes emit an empty resolved lot set and all lot
+ids in `unresolved_lot_ids`.  A composition solution is the first deterministic
+hard-valid feasibility incumbent found by the progressive proof, not a claim
+that every candidate is globally rank-optimal.
+
+### Legacy and bounded improvement behavior
+
+An intent with no composition declaration retains one capped feasibility pass
+(`max_candidates_per_lot`, default `64`) and its legacy report shape.  It does
+not run improvement.  This is intentionally not a universal-completeness claim
+over all retained candidates.
+
+For a solved composition intent, the separate `improvement_node_budget` is
+`50_000` by default; `0` disables traversal and is not an unlimited setting.
+It is separate from the feasibility budget.  Improvement starts with the
+hard-valid feasibility incumbent and uses **only the exact candidate domains
+and compatibility matrix of the successful feasibility pass**; it never widens
+to a later or global domain.  Only hard-valid, collision-valid assignments can
+replace the incumbent.
+
+The minimized objective is exactly this lexicographic tuple:
+
+1. descending `urban_unsupported_profile_gu` (urban street/service-lane
+   longest unsupported intervals; connectors excluded);
+2. descending `compact_span_profile_gu` (compact, formal-square, and gateway
+   group centroid spans);
+3. descending `compact_gap_profile_gu` (the same characters' measurable
+   maximum consecutive gaps; absent/unmeasurable values omitted);
+4. `irregular_repeated_gap_pairs` (irregular-two-sided groups only);
+5. `marker_displacement_sq`, total marker displacement squared rounded once to
+   six decimals;
+6. `assignment_signature`, canonical `(lot_id, candidate.ordinal)` pairs.
+
+This is a deterministic preference, not a weighted score or global aesthetic
+claim.  Whether improvement is disabled, exhausts its budget, or faults, the
+fit remains `solved` and retains the known hard-valid incumbent when no better
+valid result is adopted.  The composition `improvement` object reports the
+full evidence: `enabled`, `faulted`, `fault_code`, `domain_width`,
+`domain_sizes`, `node_budget`, `nodes`, `extensions`,
+`collision_valid_assignments`, `hard_valid_assignments`,
+`relationship_rejections`, `budget_exhausted`, `incumbent_improved`,
+`incumbent_objective`, and `selected_objective`.  An unexpected integration
+fault is surfaced as `faulted: true` with `fault_code` (currently
+`improvement_exception`); normal and disabled runs use `false`/`null`.
+
+The fitter writes only `intent.copy.json`, `resolved.sketch.json`, and
+`fit_report.json`.  Pass the resolved sketch to `plan_sketch.py` without
+`--auto-face`; that legacy helper would overwrite the explicit door-target
+transform.  This stage has no semantic stamp selection, road invention,
+terrain seating, TES3 authoring, or render/visual-quality certification.

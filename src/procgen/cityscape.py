@@ -47,7 +47,6 @@ from . import cityplace, regionpalette, tes3json
 from .censusio import deterministic_dumps, sha256_file, write_deterministic
 from .cityscape_edits import CityscapeEditError, apply_edit, compose_edits, validate_edit_request
 from .cityscape_field import (
-    FIELD_SIDE,
     TargetBlock,
     field_metadata,
     load_target_block,
@@ -215,7 +214,7 @@ def _stitch_audit(block: TargetBlock) -> dict[str, Any]:
         "shared_edges_exact": bool(np.array_equal(rejoined, block.source_heights_gu)),
         "rejoin_exact": bool(np.array_equal(rejoined, block.source_heights_gu)),
         "source_field_sha256": block.field_sha256,
-        "outer_border_vertex_count": int(np.count_nonzero(outer_border_mask())),
+        "outer_border_vertex_count": int(np.count_nonzero(outer_border_mask(block.field_shape))),
         "outer_border_source_frozen": True,
     }
 
@@ -263,7 +262,8 @@ def _edit_diagnostics(
     """Exercise analytic successes and structured rejects without city design."""
 
     center = [28672.0, 28672.0]
-    base_height = float(block.source_heights_gu[FIELD_SIDE // 2, FIELD_SIDE // 2])
+    field_h, field_w = block.source_heights_gu.shape
+    base_height = float(block.source_heights_gu[field_h // 2, field_w // 2])
     cases: list[tuple[str, Mapping[str, Any], str, str]] = [
         (
             "flatten_shelf_accept",
@@ -413,8 +413,8 @@ def _diagnostic_images(
         "diagnostic_scope": "synthetic_not_a_falkreath_design",
         "kind": "terrain_and_vtex_diagnostics_not_city_render",
         "resolutions": {
-            "height_delta": [FIELD_SIDE, FIELD_SIDE],
-            "final_slope": [FIELD_SIDE, FIELD_SIDE],
+            "height_delta": [int(v) for v in delta.shape],
+            "final_slope": [int(v) for v in slope.shape],
             "vtex_before": [112, 112],
             "vtex_after": [112, 112],
             "vtex_paint_classes": [112, 112],
@@ -722,7 +722,7 @@ def build_cityscape(paths: CityscapePaths) -> dict[str, Any]:
         source_unchanged={
             "planned": planned_result.source_unchanged,
             "final_against_planned": final_result.source_unchanged,
-            "overall_outer_border_exact": bool(np.array_equal(final_result.quantized_values_gu[outer_border_mask()], block.source_heights_gu[outer_border_mask()])),
+            "overall_outer_border_exact": bool(np.array_equal(final_result.quantized_values_gu[outer_border_mask(block.field_shape)], block.source_heights_gu[outer_border_mask(block.field_shape)])),
             "overall_source_outside_height_support_exact": bool(
                 planned_result.source_unchanged["outside_declared_support_exact"]
                 and final_result.source_unchanged["outside_declared_support_exact"]
@@ -761,8 +761,8 @@ def build_cityscape(paths: CityscapePaths) -> dict[str, Any]:
                 "no_clipping": True,
             },
             "immutable_border": {
-                "exact": bool(np.array_equal(final_result.quantized_values_gu[outer_border_mask()], block.source_heights_gu[outer_border_mask()])),
-                "changed_count": int(np.count_nonzero(final_result.quantized_values_gu[outer_border_mask()] != block.source_heights_gu[outer_border_mask()])),
+                "exact": bool(np.array_equal(final_result.quantized_values_gu[outer_border_mask(block.field_shape)], block.source_heights_gu[outer_border_mask(block.field_shape)])),
+                "changed_count": int(np.count_nonzero(final_result.quantized_values_gu[outer_border_mask(block.field_shape)] != block.source_heights_gu[outer_border_mask(block.field_shape)])),
             },
             "source_payload_outside_declared_support": dict(land_edits["vertex_provenance"]),
             "vtex_paint": dict(painted.paint_ledger),

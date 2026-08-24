@@ -49,12 +49,36 @@ from . import espland
 from .censusio import PinnedFile, deterministic_dumps
 
 
+# Falkreath (7x7) defaults kept as import-compatible constants; the validators
+# below derive the expected cell count / field side from the actual survey
+# cell set, so any square site (3x3, 5x5, 7x7, ...) passes without a rebuild.
 TARGET_CELL_COUNT = 49
 TARGET_SIDE_CELLS = 7
 FIELD_SIDE = TARGET_SIDE_CELLS * 64 + 1
 FIELD_SPACING_GU = 128.0
 CELL_SIZE_GU = 8192.0
 LAND_SIDE = 65
+
+
+def _rect_cell_geometry(cells: Sequence[tuple[int, int]], label: str) -> tuple[list[int], list[int]]:
+    """Validate a contiguous rectangular cell set; return (xs, ys).
+
+    Rectangles are fully supported: a site may be any contiguous
+    width x height block of cells (squares included).  All downstream field
+    shapes are derived as (len(ys) * 64 + 1, len(xs) * 64 + 1), row-major
+    [y, x], never from a hardcoded side.
+    """
+
+    xs = sorted({cell[0] for cell in cells})
+    ys = sorted({cell[1] for cell in cells})
+    if not xs or not ys:
+        raise CityscapeFieldError(f"{label}: empty target cell set")
+    expected = {(x, y) for y in ys for x in xs}
+    if set(cells) != expected or xs != list(range(xs[0], xs[-1] + 1)) or ys != list(range(ys[0], ys[-1] + 1)):
+        raise CityscapeFieldError(
+            f"{label}: target cells are not a contiguous {len(xs)}x{len(ys)} block"
+        )
+    return xs, ys
 
 
 class CityscapeFieldError(ValueError):
@@ -169,18 +193,11 @@ def _target_cells_from_survey(survey: Mapping[str, Any]) -> tuple[tuple[int, int
     if not isinstance(rows, list):
         raise CityscapeFieldError("site survey has no cells list")
     cells_set = {_cell_key(row["grid"]) for row in rows if isinstance(row, Mapping)}
+    if len(cells_set) != len(rows):
+        raise CityscapeFieldError("site survey cells list contains duplicate or invalid grids")
     cells = tuple(sorted(cells_set))
-    if len(cells) != TARGET_CELL_COUNT:
-        raise CityscapeFieldError(
-            f"site survey target contains {len(cells)} cells, expected {TARGET_CELL_COUNT}"
-        )
-    xs = sorted({cell[0] for cell in cells})
-    ys = sorted({cell[1] for cell in cells})
+    xs, ys = _rect_cell_geometry(cells, "site survey target")
     expected = tuple((x, y) for y in ys for x in xs)
-    if len(xs) != TARGET_SIDE_CELLS or len(ys) != TARGET_SIDE_CELLS or cells_set != set(expected):
-        raise CityscapeFieldError(
-            f"site survey cells are not the contiguous 7x7 target: {cells[:3]} ..."
-        )
     target = survey.get("target_cells")
     if isinstance(target, Mapping):
         expected_bounds = {
@@ -264,16 +281,13 @@ def stitch_heights(
     """Join 49 source LAND height grids, rejecting disagreement at every seam."""
 
     cell_list = tuple(sorted(cells))
-    if len(cell_list) != TARGET_CELL_COUNT:
-        raise CityscapeFieldError("stitch_heights requires exactly 49 target cells")
+    xs, ys = _rect_cell_geometry(cell_list, "stitch_heights")
     mismatches = _edge_mismatch_rows(records, cell_list)
     if mismatches:
         raise CityscapeFieldError(
             "source LAND shared-edge disagreement: " + json.dumps(mismatches[:4], sort_keys=True)
         )
-    xs = sorted({cell[0] for cell in cell_list})
-    ys = sorted({cell[1] for cell in cell_list})
-    result = np.empty((FIELD_SIDE, FIELD_SIDE), dtype=np.float64)
+    result = np.empty((len(ys) * 64 + 1, len(xs) * 64 + 1), dtype=np.float64)
     for cell_y, y in enumerate(ys):
         for cell_x, x in enumerate(xs):
             record = records[(x, y)]
@@ -294,15 +308,13 @@ def split_field(
     """Split a joint field into exact 65x65 per-cell float64 arrays."""
 
     field = np.asarray(values_gu, dtype=np.float64)
-    if field.shape != (FIELD_SIDE, FIELD_SIDE):
-        raise CityscapeFieldError(
-            f"joint terrain field must be {FIELD_SIDE}x{FIELD_SIDE}, got {field.shape}"
-        )
     cell_list = tuple(sorted(cells))
-    xs = sorted({cell[0] for cell in cell_list})
-    ys = sorted({cell[1] for cell in cell_list})
-    if len(xs) != TARGET_SIDE_CELLS or len(ys) != TARGET_SIDE_CELLS:
-        raise CityscapeFieldError("split_field requires a 7x7 target cell set")
+    xs, ys = _rect_cell_geometry(cell_list, "split_field")
+    expected_shape = (len(ys) * 64 + 1, len(xs) * 64 + 1)
+    if field.shape != expected_shape:
+        raise CityscapeFieldError(
+            f"joint terrain field must be {expected_shape}, got {field.shape}"
+        )
     result: dict[tuple[int, int], np.ndarray] = {}
     for y in ys:
         for x in xs:
@@ -318,9 +330,8 @@ def rejoin_field(
     """Rejoin split grids and reject any seam that is no longer exact."""
 
     cell_list = tuple(sorted(cells))
-    result = np.empty((FIELD_SIDE, FIELD_SIDE), dtype=np.float64)
-    xs = sorted({cell[0] for cell in cell_list})
-    ys = sorted({cell[1] for cell in cell_list})
+    xs, ys = _rect_cell_geometry(cell_list, "rejoin_field")
+    result = np.empty((len(ys) * 64 + 1, len(xs) * 64 + 1), dtype=np.float64)
     for y in ys:
         for x in xs:
             value = np.asarray(per_cell[(x, y)], dtype=np.float64)
@@ -331,10 +342,18 @@ def rejoin_field(
     return result
 
 
-def outer_border_mask() -> np.ndarray:
-    """Return the immutable outer vertex border mask for the 449x449 field."""
+def outer_border_mask(shape: tuple[int, int] | int = FIELD_SIDE) -> np.ndarray:
+    """Return the immutable outer vertex border mask for an (h, w) field.
 
-    mask = np.zeros((FIELD_SIDE, FIELD_SIDE), dtype=bool)
+    Accepts either a (height, width) tuple or a single square side for
+    backwards compatibility with the Falkreath 449x449 call sites.
+    """
+
+    if isinstance(shape, tuple):
+        height, width = shape
+    else:
+        height = width = int(shape)
+    mask = np.zeros((height, width), dtype=bool)
     mask[0, :] = True
     mask[-1, :] = True
     mask[:, 0] = True
@@ -382,7 +401,7 @@ class TargetBlock:
 
     @property
     def border_mask(self) -> np.ndarray:
-        return outer_border_mask()
+        return outer_border_mask(self.field_shape)
 
     def source_cell_field(self, cell: tuple[int, int]) -> np.ndarray:
         """Return a copy of one source cell in float64 GU."""
@@ -395,13 +414,12 @@ class TargetBlock:
     def outside_source_height_gu(self, global_x: int, global_y: int) -> float:
         """Sample a target-relative vertex, including its one-cell border."""
 
-        xs = sorted({cell[0] for cell in self.cells})
-        ys = sorted({cell[1] for cell in self.cells})
-        if not (-1 <= global_x <= FIELD_SIDE and -1 <= global_y <= FIELD_SIDE):
+        field_h, field_w = self.field_shape
+        if not (-1 <= global_x <= field_w and -1 <= global_y <= field_h):
             raise CityscapeFieldError("normal context request exceeds one-cell border")
         # The source field already covers the target.  Only the one-vertex halo
         # is needed for central differences at the immutable block edge.
-        if 0 <= global_x <= FIELD_SIDE - 1 and 0 <= global_y <= FIELD_SIDE - 1:
+        if 0 <= global_x <= field_w - 1 and 0 <= global_y <= field_h - 1:
             return float(self.source_heights_gu[global_y, global_x])
         world_x = self.origin_gu[0] + global_x * self.spacing_gu
         world_y = self.origin_gu[1] + global_y * self.spacing_gu
@@ -572,8 +590,9 @@ def write_field_npz(
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     array = np.asarray(values_gu, dtype="<f8")
-    if array.shape != (FIELD_SIDE, FIELD_SIDE) or not np.isfinite(array).all():
-        raise CityscapeFieldError("field NPZ requires a finite 449x449 float64 array")
+    if array.ndim != 2 or not np.isfinite(array).all():
+        raise CityscapeFieldError("field NPZ requires a finite 2D float64 array")
+    height, width = array.shape
     stream = io.BytesIO()
     np_format.write_array(stream, array, allow_pickle=False)
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -586,7 +605,7 @@ def write_field_npz(
         "path": str(target),
         "sha256": sha256_file(target),
         "content_sha256": terrain_field_sha256(array),
-        "shape": [FIELD_SIDE, FIELD_SIDE],
+        "shape": [height, width],
         "dtype": str(array.dtype),
         "metadata": dict(metadata),
     }
@@ -612,11 +631,12 @@ def field_metadata(
 
     if field_pass not in {"planned", "final"}:
         raise CityscapeFieldError(f"unknown terrain field pass {field_pass!r}")
+    field_shape = [int(v) for v in np.asarray(values_gu).shape]
     return {
         "schema_version": 1,
         "frame_origin_gu": list(block.origin_gu),
         "spacing_gu": [block.spacing_gu, block.spacing_gu],
-        "shape": [FIELD_SIDE, FIELD_SIDE],
+        "shape": field_shape,
         "units": "game_units",
         "pass": field_pass,
         "provenance": provenance,

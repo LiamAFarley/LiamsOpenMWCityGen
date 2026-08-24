@@ -10,13 +10,13 @@ T1.4.  It never resolves a raw value through a global load-order table.
 
 Priority and semantics
 ----------------------
-1. road corridors -> explicit raw 78;
+1. road corridors -> the plan road's declared semantic assignment;
 2. placed lot footprints -> explicit settlement dirt raw 241;
 3. declared zone mixes -> deterministic low-frequency plan-hash hashing;
 4. margin transitions -> grass-dirt where that class is declared.
 
 Raw 1/lakebed tiles are preserved and are never assigned to roads.  Existing
-raw 78 source roads are also protected from district repainting; planned road
+configured source-road assignments are also protected from district repainting; planned road
 corridors are unioned with that source road set.  Raw 92 pine and raw 33 base
 grass remain source/effective classes outside paint support.  Every positive raw value in the emitted grids must have one exact
 local LTEX record (index = raw - 1) with the palette/remap id/path contract.
@@ -42,6 +42,7 @@ import numpy as np
 
 from . import espland, regionpalette
 from .cityscape_field import TargetBlock
+from .road_semantics import load_road_assignments, road_class_for_plan_road
 
 
 TILE_SIDE = 16
@@ -129,7 +130,11 @@ def load_surface_assignments(palette: Mapping[str, Any]) -> dict[str, SurfaceAss
     surfaces = palette.get("semantic_surfaces", {}).get("surfaces")
     if not isinstance(surfaces, list):
         raise CityscapeVTEXError("region palette has no semantic surface table")
-    checks = regionpalette.validate_authoring_assignments(surfaces)
+    explicit_roads = palette.get("road_assignments") or palette.get("road_classes")
+    checks = regionpalette.validate_authoring_assignments(
+        surfaces,
+        require_road=not bool(explicit_roads),
+    )
     failed = [check for check in checks if not check.get("passed")]
     if failed:
         raise CityscapeVTEXError(f"palette authoring assignment gate failed: {failed}")
@@ -179,9 +184,34 @@ def load_surface_assignments(palette: Mapping[str, Any]) -> dict[str, SurfaceAss
         if name in result:
             raise CityscapeVTEXError(f"duplicate semantic surface {name!r}")
         result[name] = SurfaceAssignment(name, raw, index, ltex_id, path)
+    if explicit_roads:
+        try:
+            road_assignments = load_road_assignments(palette)
+        except ValueError as exc:
+            raise CityscapeVTEXError(str(exc)) from exc
+        for name, assignment in road_assignments.items():
+            existing = result.get(name)
+            candidate = SurfaceAssignment(
+                name,
+                assignment.raw_vtex,
+                assignment.ltex_index,
+                assignment.ltex_id,
+                assignment.file_name,
+            )
+            if existing is not None and existing != candidate:
+                raise CityscapeVTEXError(f"road assignment {name!r} disagrees with semantic surface assignment")
+            result[name] = candidate
     required = palette.get("planned_output_plugin", {}).get("required_local_ltex")
     required_indices = sorted(int(row["ltex_index"]) for row in required) if isinstance(required, list) else []
-    if required_indices != sorted(assignment.ltex_index for assignment in result.values()):
+    if explicit_roads:
+        required_indices = sorted(
+            set(required_indices)
+            | {assignment.ltex_index for assignment in load_road_assignments(palette).values()}
+        )
+    # Several semantic road classes may intentionally share one remapped LTEX
+    # record (for example secondary roads and alleys).  Compare the referenced
+    # records as sets, not ordered rows, so that texture reuse remains valid.
+    if set(required_indices) != {assignment.ltex_index for assignment in result.values()}:
         raise CityscapeVTEXError("palette required_local_ltex does not equal explicit surface assignments")
     return dict(sorted(result.items()))
 
@@ -239,8 +269,13 @@ def _road_tiles(
     block: TargetBlock,
     plan: Mapping[str, Any],
     placement: Mapping[str, Any] | None = None,
-) -> set[tuple[tuple[int, int], int, int]]:
-    result: set[tuple[tuple[int, int], int, int]] = set()
+    assignments: Mapping[str, SurfaceAssignment] | None = None,
+    road_assignments: Mapping[str, Any] | None = None,
+    hierarchy_map: Mapping[str, str] | None = None,
+) -> dict[tuple[tuple[int, int], int, int], str]:
+    result: dict[tuple[tuple[int, int], int, int], str] = {}
+    if assignments is None or road_assignments is None:
+        raise CityscapeVTEXError("road tile rasterization requires explicit surface assignments")
     roads = list(plan.get("roads", []))
     if isinstance(placement, Mapping):
         # D-PLACE may later expose rasterized solver step paths separately
@@ -250,8 +285,10 @@ def _road_tiles(
     for road in roads:
         if not isinstance(road, Mapping):
             continue
-        if str(road.get("surface")) != "road":
-            continue
+        try:
+            road_class = road_class_for_plan_road(road, road_assignments, hierarchy_map).road_class
+        except ValueError as exc:
+            raise CityscapeVTEXError(str(exc)) from exc
         polyline = road.get("polyline")
         width = float(road.get("width_gu", 0.0))
         if not isinstance(polyline, list) or len(polyline) < 2 or not math.isfinite(width) or width <= 0.0:
@@ -264,7 +301,13 @@ def _road_tiles(
                     # within half a tile reaches the declared road width.  This
                     # rasterization is conservative and deterministic.
                     if _polyline_distance(point, polyline) <= width / 2.0 + TILE_SIZE_GU / 2.0:
-                        result.add((cell, tile_x, tile_y))
+                        key = (cell, tile_x, tile_y)
+                        prior = result.get(key)
+                        if prior is not None and prior != road_class:
+                            raise CityscapeVTEXError(
+                                f"overlapping roads assign tile {key} to both {prior!r} and {road_class!r}"
+                            )
+                        result[key] = road_class
     return result
 
 
@@ -433,8 +476,27 @@ def paint_vtex(
     """Paint effective VTEX grids using dispatch-5 assignments and priorities."""
 
     assignments = load_surface_assignments(palette)
+    try:
+        configured_roads = load_road_assignments(palette)
+    except ValueError as exc:
+        raise CityscapeVTEXError(str(exc)) from exc
+    for road_class, configured in configured_roads.items():
+        surface = assignments.get(road_class)
+        if surface is None or (surface.raw_vtex, surface.ltex_index, surface.ltex_id, surface.file_name) != (
+            configured.raw_vtex, configured.ltex_index, configured.ltex_id, configured.file_name
+        ):
+            raise CityscapeVTEXError(
+                f"road assignment {road_class!r} disagrees with semantic surface assignment"
+            )
     zones = _zone_rows(plan, assignments)
-    roads = _road_tiles(block, plan, placement)
+    roads = _road_tiles(
+        block,
+        plan,
+        placement,
+        assignments,
+        configured_roads,
+        palette.get("road_class_by_hierarchy"),
+    )
     lots = _lot_tiles(block, placement)
     water = _survey_water_tiles(block, survey)
     authorized_water = _authorized_water_tiles(block, plan)
@@ -456,17 +518,26 @@ def paint_vtex(
     }
     water_set |= raw1_set
     water_set -= authorized_water
-    # Existing effective raw-78 tiles are already surveyed road identity.  A
-    # district zone must never reclassify them; planned/solver corridors are
-    # unioned with that protected source set before any lower-priority pass.
-    source_road_set = {
-        (cell, tile_x, tile_y)
+    # Existing effective tiles whose values are explicitly assigned to a road
+    # class are protected. Planned/solver corridors are unioned with that
+    # configured source set before any lower-priority pass.
+    road_assignment_by_raw = {
+        assignment.raw_vtex: road_class
+        for road_class, assignment in configured_roads.items()
+    }
+    if not road_assignment_by_raw:
+        raise CityscapeVTEXError("palette has no explicit road-class assignments")
+    source_road_tiles = {
+        (cell, tile_x, tile_y): road_assignment_by_raw[int(grid[tile_y, tile_x])]
         for cell, grid in source_grids.items()
         for tile_y in range(TILE_SIDE)
         for tile_x in range(TILE_SIDE)
-        if int(grid[tile_y, tile_x]) == 78
+        if int(grid[tile_y, tile_x]) in road_assignment_by_raw
     }
-    road_set = set(roads) | source_road_set
+    road_tile_classes = dict(source_road_tiles)
+    for key, road_class in roads.items():
+        road_tile_classes[key] = road_class
+    road_set = set(road_tile_classes)
     lot_set = set(lots)
     # Discover support first so source-outside-support is a meaningful hard
     # gate even when a higher-priority road or lot later overwrites a zone.
@@ -482,25 +553,26 @@ def paint_vtex(
                 if key in road_set or key in lot_set or zone is not None:
                     supports[cell][tile_y, tile_x] = True
     # Roads have absolute priority, except a water/lakebed tile is preserved.
-    road_assignment = assignments.get("road")
-    if road_assignment is None:
-        raise CityscapeVTEXError("closed palette has no road assignment")
     dirt_assignment = assignments.get("settlement_dirt")
     if dirt_assignment is None:
         raise CityscapeVTEXError("closed palette has no settlement_dirt assignment")
     for key in sorted(road_set, key=lambda item: (item[0][1], item[0][0], item[2], item[1])):
         cell, tile_x, tile_y = key
         source_raw = int(source_grids[cell][tile_y, tile_x])
-        if key in water_set or source_raw == assignments.get("water_edge_sand", SurfaceAssignment("", 1, 0, "", "")).raw_vtex:
+        if key in water_set or source_raw == assignments.get("water_edge_sand", SurfaceAssignment("", -1, -2, "", "")).raw_vtex:
             priority_counts["water_preserved"] += 1
             continue
+        road_class = road_tile_classes[key]
+        road_assignment = assignments.get(road_class)
+        if road_assignment is None:
+            raise CityscapeVTEXError(f"road tile {key} uses unknown road class {road_class!r}")
         grids[cell][tile_y, tile_x] = road_assignment.raw_vtex
         priority_counts["road"] += 1
     # Exact lot footprint dirt is next, but never overwrites an already-painted
     # road or preserved water tile.
     for key in sorted(lot_set, key=lambda item: (item[0][1], item[0][0], item[2], item[1])):
         cell, tile_x, tile_y = key
-        if key in water_set or key in road_set and int(grids[cell][tile_y, tile_x]) == road_assignment.raw_vtex:
+        if key in water_set or key in road_set:
             continue
         grids[cell][tile_y, tile_x] = dirt_assignment.raw_vtex
         priority_counts["lot"] += 1
@@ -610,7 +682,7 @@ def paint_vtex(
             raw_counts[str(int(value))] = raw_counts.get(str(int(value)), 0) + 1
     paint_ledger = {
         "plan_hash": plan_hash,
-        "priority": ["road_raw_78", "lot_settlement_dirt_raw_241", "zone_weight_mix", "margin_grass_dirt"],
+        "priority": ["road_semantic_assignment", "lot_settlement_dirt", "zone_weight_mix", "margin_grass_dirt"],
         "declared_zone_count": len(zones),
         "road_support_tile_count": len(road_set),
         "source_road_tile_count": len(source_road_set),
@@ -623,7 +695,7 @@ def paint_vtex(
         "raw_counts": dict(sorted(raw_counts.items(), key=lambda item: int(item[0]))),
         "source_outside_support_unchanged": changed_outside == 0,
         "water_preserved": water_changed == 0,
-        "raw_78_road_gate": road_raw1 == 0,
+        "road_gate": road_raw1 == 0,
         "surface_assignments": {name: assignment.to_dict() for name, assignment in assignments.items()},
         "local_ltex_indices": [int(row["index"]) for row in local_ltex],
         "local_ltex_complete": True,

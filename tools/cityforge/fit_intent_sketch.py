@@ -1,23 +1,26 @@
-"""Fit an authored Cityforge frontage intent into an exact resolved sketch.
+"""Fit an authored Cityforge frontage/composition intent into a resolved sketch.
 
 Pipeline position
 ------------------
-This CLI is the v1 authoring boundary between a designer's world-GU intent and
-the existing ``plan_sketch.py`` renderer.  It loads the planning bundle's
-manifest-pinned full-precision stamp libraries, aligned road network, and
-terrain masks; builds named source/authored targets; runs the pure
-``procgen.frontage_fit`` search; and writes only JSON under a fresh output
-directory.  It never renders, runs Blender, authors TES3, or changes source
-libraries/mod files.
+This CLI is the JSON-only authoring boundary between a designer's world-GU
+intent and the existing ``plan_sketch.py`` renderer.  It loads
+manifest-pinned full-precision stamp libraries, the aligned road network, and
+terrain masks; builds only named source/authored targets; runs the pure
+``procgen.frontage_fit`` geometry, hard-relationship, and optional bounded
+improvement stages; and writes three files under a fresh output directory.  It
+never renders, runs Blender, authors TES3, changes source libraries/mod files,
+selects stamps semantically, invents roads, or claims a global beauty optimum.
 
-Usage
------
+Usage and handoff
+------------------
 ``python tools/cityforge/fit_intent_sketch.py --bundle <bundle> --intent
 <intent.json> --out <fresh-output-dir>``
 
-``resolved.sketch.json`` is consumed separately by ``plan_sketch.py``.  Do not
-pass ``--auto-face`` to that second command: it would overwrite the explicit
-door-target transform solved here.
+The outputs are ``intent.copy.json``, ``resolved.sketch.json``, and
+``fit_report.json``.  The resolved sketch is consumed separately by
+``plan_sketch.py``; do **not** pass ``--auto-face`` to that command because it
+would overwrite the explicit door-target transform solved here.  Unsolved or
+inconclusive fits write no partial resolved lot set and exit nonzero.
 """
 
 from __future__ import annotations

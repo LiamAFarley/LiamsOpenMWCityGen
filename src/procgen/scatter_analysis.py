@@ -537,6 +537,8 @@ def texture_at_position(
     land_records: Mapping[tuple[int, int], LandRecord],
     ltex: Mapping[int, LandscapeTexture],
     position: Sequence[float],
+    *,
+    missing_vtex_is_base: bool = False,
 ) -> dict[str, Any]:
     """Resolve the owning LAND's VTEX tile to LTEX name/path.
 
@@ -553,12 +555,22 @@ def texture_at_position(
     cell_x = math.floor(game_x / CELL_SIZE_GAME_UNITS)
     cell_y = math.floor(game_y / CELL_SIZE_GAME_UNITS)
     record = land_records.get((cell_x, cell_y))
-    if record is None or not record.has_textures:
+    if record is None:
         raise ValueError(f"LAND VTEX is missing at reference position {(game_x, game_y)}")
     local_x = min(CELL_SIZE_GAME_UNITS - 1e-9, max(0.0, game_x - cell_x * CELL_SIZE_GAME_UNITS))
     local_y = min(CELL_SIZE_GAME_UNITS - 1e-9, max(0.0, game_y - cell_y * CELL_SIZE_GAME_UNITS))
     tile_x = min(15, max(0, math.floor(local_x / (CELL_SIZE_GAME_UNITS / 16.0))))
     tile_y = min(15, max(0, math.floor(local_y / (CELL_SIZE_GAME_UNITS / 16.0))))
+    if not record.has_textures:
+        if not missing_vtex_is_base:
+            raise ValueError(f"LAND VTEX is missing at reference position {(game_x, game_y)}")
+        return {
+            "index": None,
+            "raw_vtex": 0,
+            "name": BASE_LAND_TEXTURE_NAME,
+            "path": BASE_LAND_TEXTURE_PATH,
+            "tile": [tile_x, tile_y],
+        }
     raw_vtex = int(record.texture_index(tile_x, tile_y))
     index = record.texture_ltex_index(tile_x, tile_y)
     if index is None:
@@ -783,6 +795,8 @@ def _terrain_context(
     land_records: Mapping[tuple[int, int], LandRecord],
     ltex: Mapping[int, LandscapeTexture],
     water_index: WaterDistanceIndex,
+    ltex_by_grid: Mapping[tuple[int, int], Mapping[int, LandscapeTexture]] | None = None,
+    missing_vtex_is_base: bool = False,
 ) -> dict[str, Any]:
     if ref.position is None:
         raise ValueError("included scatter reference has no DATA position")
@@ -794,7 +808,17 @@ def _terrain_context(
     slope = terrain_slope_deg(land_records, ref.position)
     if slope is None:
         raise ValueError(f"included scatter reference has no slope neighborhood at {ref.position[:2]}")
-    texture = texture_at_position(land_records, ltex, ref.position)
+    cell_key = (
+        math.floor(float(ref.position[0]) / CELL_SIZE_GAME_UNITS),
+        math.floor(float(ref.position[1]) / CELL_SIZE_GAME_UNITS),
+    )
+    texture_table = ltex_by_grid.get(cell_key, ltex) if ltex_by_grid is not None else ltex
+    texture = texture_at_position(
+        land_records,
+        texture_table,
+        ref.position,
+        missing_vtex_is_base=missing_vtex_is_base,
+    )
     return {
         "terrain_z_thu": _round(float(terrain_thu)),
         "terrain_z_gu": _round(terrain_gu),
@@ -1090,11 +1114,20 @@ def analyze_vorndgad(
     source_metadata: Mapping[str, Any] | None = None,
     composite_validation: Mapping[str, Any] | None = None,
     seed: int = 20260801,
+    expected_cell_count: int = 59,
+    scope_region: str = "Vorndgad Forest Region",
+    scope_bounds: Sequence[int] | None = None,
+    ltex_by_grid: Mapping[tuple[int, int], Mapping[int, LandscapeTexture]] | None = None,
+    missing_vtex_is_base: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Analyze target cells and return scatter and cliff documents."""
 
-    if len(cells) != 59:
-        raise ValueError(f"analysis expects 59 target cells, got {len(cells)}")
+    if expected_cell_count < 1:
+        raise ValueError("analysis expected_cell_count must be positive")
+    if len(cells) != expected_cell_count:
+        raise ValueError(
+            f"analysis expects {expected_cell_count} target cells, got {len(cells)}"
+        )
     sorted_cells = sorted(cells, key=lambda cell: (cell.grid[1], cell.grid[0]))  # type: ignore[index]
     decisions: list[
         tuple[CellSummary, CellReference, ScreeningDecision, str, ObjectDefinition | None]
@@ -1117,7 +1150,14 @@ def analyze_vorndgad(
             rotation = ref.rotation or (0.0, 0.0, 0.0)
             scale = 1.0 if ref.scale is None else float(ref.scale)
             world_bbox = transformed_bbox(bbox, ref.position, rotation, scale)
-            terrain = _terrain_context(ref, land_records, ltex, water_index)
+            terrain = _terrain_context(
+                ref,
+                land_records,
+                ltex,
+                water_index,
+                ltex_by_grid,
+                missing_vtex_is_base=missing_vtex_is_base,
+            )
             candidates.append(
                 _Candidate(
                     ref_id=ref_id,
@@ -1178,6 +1218,16 @@ def analyze_vorndgad(
     source_meta = dict(source_metadata or {})
     density_document = _density_summary(density_rows)
     density_document["rock_density_by_slope"] = _rock_density_by_slope(candidates)
+    derived_bounds = [
+        min(cell.grid[0] for cell in sorted_cells),
+        max(cell.grid[0] for cell in sorted_cells),
+        min(cell.grid[1] for cell in sorted_cells),
+        max(cell.grid[1] for cell in sorted_cells),
+    ]
+    if scope_bounds is not None:
+        if len(scope_bounds) != 4:
+            raise ValueError("scope_bounds must contain [min_x, max_x, min_y, max_y]")
+        derived_bounds = [int(value) for value in scope_bounds]
     scatter_document: dict[str, Any] = {
         "schema_version": 1,
         "tool": "procgen.scatter_analysis",
@@ -1185,8 +1235,8 @@ def analyze_vorndgad(
         "seed": int(seed),
         "determinism": "no random draws; sorted inputs and linear-interpolation percentiles",
         "scope": {
-            "region": "Vorndgad Forest Region",
-            "bounds_cells": [-108, -99, 7, 15],
+            "region": scope_region,
+            "bounds_cells": derived_bounds,
             "exterior_cell_count": len(sorted_cells),
             "named_settlement_count": len({cell.name for cell in sorted_cells if cell.name}),
             "named_settlements": sorted({cell.name for cell in sorted_cells if cell.name}, key=lambda value: (value.casefold(), value)),
@@ -1334,6 +1384,8 @@ def analyze_vorndgad(
 def validate_analysis_documents(
     scatter_document: Mapping[str, Any],
     cliff_document: Mapping[str, Any],
+    *,
+    expected_cell_count: int = 59,
 ) -> dict[str, Any]:
     """Perform strict post-generation acceptance checks."""
 
@@ -1342,8 +1394,12 @@ def validate_analysis_documents(
     refs = scatter_document.get("refs", [])
     species = scatter_document.get("species_stats", {})
     density = scatter_document.get("density", {})
-    if scope.get("exterior_cell_count") != 59:
-        raise ValueError("analysis document does not cover exactly 59 target cells")
+    if expected_cell_count < 1:
+        raise ValueError("expected_cell_count must be positive")
+    if scope.get("exterior_cell_count") != expected_cell_count:
+        raise ValueError(
+            f"analysis document does not cover exactly {expected_cell_count} target cells"
+        )
     if not isinstance(refs, list) or not refs:
         raise ValueError("analysis document has no scatter refs")
     if int(screening.get("included_references", -1)) != len(refs):
@@ -1363,7 +1419,7 @@ def validate_analysis_documents(
             raise ValueError("screened structure/clutter leaked into scatter refs")
     if not isinstance(species, Mapping) or not species:
         raise ValueError("species stats are empty")
-    if not isinstance(density.get("cells"), list) or len(density["cells"]) != 59:
+    if not isinstance(density.get("cells"), list) or len(density["cells"]) != expected_cell_count:
         raise ValueError("density stats do not contain all target cells")
     giants = cliff_document.get("giants", [])
     if int(cliff_document.get("giant_count", -1)) != len(giants):
@@ -1372,7 +1428,7 @@ def validate_analysis_documents(
         if not giant.get("terrain") or "adjacency" not in giant or "stackers" not in giant:
             raise ValueError("cliff giant is missing terrain, stacker, or adjacency detail")
     return {
-        "target_cells": 59,
+        "target_cells": expected_cell_count,
         "scatter_refs": len(refs),
         "species_meshes": len(species),
         "cliff_giants": len(giants),

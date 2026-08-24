@@ -18,8 +18,9 @@ globally aligned LAND 512-GU tile they intersect, rejecting configured road
 VTEX values and missing LAND/VTEX data fail-closed.  All four gates are
 deterministic and are represented in the output audits.  Existing
 clearing/low-bank flora behavior, lighting, rock patch rules, stackers, and
-cliff face chaining remain unchanged.  Five explicitly normalized mesh paths
-are quarantined before rock/cliff quota allocation; two rock meshes have a
+cliff face chaining remain unchanged.  One-sided L_04 cliff shells and four
+cluster rocks remain quarantined before quota allocation (open undersides need
+pitch/roll seating yaw alone cannot provide).  Two rock meshes have a
 15-degree local-up tilt ceiling; trees are emitted with sampled Z yaw and zero
 X/Y tilt; and accepted large rock/cliff transformed AABBs reserve a 128-GU
 margin around tree centers.
@@ -31,7 +32,10 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import math
 import random
-from typing import Any, Iterable, Mapping, Sequence
+import time
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+import numpy as np
 
 from .espland import (
     CELL_SIZE_GAME_UNITS,
@@ -40,12 +44,13 @@ from .espland import (
     LandRecord,
     height_at_game_position,
 )
+from .clearing_index import ClearingIndex, MultiClearingIndex, build_clearing_index
+from .cliff_seating import CliffSeatingRuntime
 from .scatter_analysis import (
     WaterDistanceIndex,
     bbox_info,
     normalize_mesh_key,
     rotate_tes3_reference_point,
-    terrain_slope_deg,
     transformed_bbox,
 )
 from .seeds import derive_seed
@@ -80,17 +85,42 @@ DEFAULT_OPEN_FACE_MIN_ALIGNMENT = 0.35
 DEFAULT_OPEN_FACE_ORIENTATION_ATTEMPTS = 18
 DEFAULT_OPEN_FACE_NEIGHBOR_RADIUS_GU = 4_096.0
 DEFAULT_OPEN_FACE_MIN_EMBED_GU = 4.0
+DEFAULT_OPEN_SIDE_CLIFF_MIN_SLOPE_DEG = 24.0
 DEFAULT_MIN_EMBED_GU = 1.0
 DEFAULT_CLIFF_MIN_EMBED_GU = 64.0
 DEFAULT_CLIFF_MIN_VISIBLE_GU = 32.0
-DEFAULT_ROAD_RAW_VTEX_VALUES = (78,)
 LAND_TEXTURE_TILE_SIZE_GU = CELL_SIZE_GAME_UNITS / LAND_TEXTURE_SIDE
 
 # These are explicit policy paths rather than filename heuristics.  The
 # normalized keys are used at every comparison boundary so source spelling,
-# slash direction, and case cannot bypass the cleanup rules.
+# slash direction, and case cannot bypass the cleanup rules.  L_04 shells are
+# bottom-open front/top hulls; pose-first yaw does not seat them, so they stay
+# quarantined until pitch/roll or terrain-shape burial exists.
 QUARANTINED_MESH_PATHS = (
+    # One-sided L_04 cliff shells: open bottom (+ often open side); upright yaw
+    # placement exposes flat undersides on ordinary Falkreath slopes.
+    r"Sky\f\Sky_TerrCliff_L_04_A1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_A2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_B1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_B3.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_B4.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_D1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_D2.nif",
     r"Sky\f\Sky_TerrCliff_L_04_E1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_E2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_F1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_F2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_G1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_G2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_H2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_I1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_I2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_L1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_L2.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_M1.nif",
+    r"Sky\f\Sky_TerrCliff_L_04_M2.nif",
+    # Rocks that expose open undersides or need cluster/slope support the
+    # independent placer still cannot prove.
     r"Sky\f\Sky_TerrRock_04_H05.nif",
     r"Sky\f\Sky_TerrRock_04_017.nif",
     r"Sky\f\Sky_TerrRock_04_008.nif",
@@ -170,39 +200,134 @@ def _smoothstep(value: float) -> float:
     return value * value * (3.0 - 2.0 * value)
 
 
-def envelope_weight(value: float, envelope: Mapping[str, Any]) -> float:
-    """Return measured-envelope membership for one terrain dimension."""
+def _smoothstep_array(values: np.ndarray) -> np.ndarray:
+    clipped = np.clip(values, 0.0, 1.0)
+    return clipped * clipped * (3.0 - 2.0 * clipped)
 
-    numeric = _finite(value)
-    if numeric is None:
-        return 0.0
+
+def _envelope_finite_params(
+    envelope: Mapping[str, Any],
+) -> tuple[float, float, float, float, float, float] | None:
+    """Return ``(low, high, p10, p90, center, sigma)`` or ``None`` when empty."""
+
     values = {name: _finite(envelope.get(name)) for name in ("min", "p10", "p50", "p90", "max")}
     center = values["p50"]
     if center is None:
-        return 0.0
+        return None
     low = values["min"] if values["min"] is not None else center
     high = values["max"] if values["max"] is not None else center
     if high < low:
         low, high = high, low
     if abs(high - low) <= 1e-9:
-        return 1.0 if abs(numeric - center) <= 1e-6 else 0.0
-    if numeric < low or numeric > high:
-        return 0.0
+        # Degenerate envelope: callers treat this as a point match on center.
+        return (low, high, low, high, center, 1.0)
     p10 = values["p10"] if values["p10"] is not None else low
     p90 = values["p90"] if values["p90"] is not None else high
     p10 = max(low, min(high, p10))
     p90 = max(low, min(high, p90))
     if p10 > p90:
         p10, p90 = p90, p10
+    sigma = max((p90 - p10) / 2.0, (high - low) / 8.0, 1.0)
+    return (float(low), float(high), float(p10), float(p90), float(center), float(sigma))
+
+
+def envelope_weight(value: float, envelope: Mapping[str, Any]) -> float:
+    """Return measured-envelope membership for one terrain dimension."""
+
+    numeric = _finite(value)
+    if numeric is None:
+        return 0.0
+    params = _envelope_finite_params(envelope)
+    if params is None:
+        return 0.0
+    low, high, p10, p90, center, sigma = params
+    if abs(high - low) <= 1e-9:
+        return 1.0 if abs(numeric - center) <= 1e-6 else 0.0
+    if numeric < low or numeric > high:
+        return 0.0
     if numeric < p10 and p10 > low:
         edge = _smoothstep((numeric - low) / (p10 - low))
     elif numeric > p90 and high > p90:
         edge = 1.0 - _smoothstep((numeric - p90) / (high - p90))
     else:
         edge = 1.0
-    sigma = max((p90 - p10) / 2.0, (high - low) / 8.0, 1.0)
     core = math.exp(-0.5 * ((numeric - center) / sigma) ** 2)
     return max(0.0, min(1.0, edge * core))
+
+
+def envelope_weight_array(values: np.ndarray, envelope: Mapping[str, Any]) -> np.ndarray:
+    """Vectorized ``envelope_weight`` over a float64 value array."""
+
+    output = np.zeros(values.shape, dtype=np.float64)
+    if values.size == 0:
+        return output
+    params = _envelope_finite_params(envelope)
+    if params is None:
+        return output
+    low, high, p10, p90, center, sigma = params
+    numeric = values.astype(np.float64, copy=False)
+    finite = np.isfinite(numeric)
+    if abs(high - low) <= 1e-9:
+        output[finite & (np.abs(numeric - center) <= 1e-6)] = 1.0
+        return output
+    inside = finite & (numeric >= low) & (numeric <= high)
+    if not np.any(inside):
+        return output
+    edge = np.ones(values.shape, dtype=np.float64)
+    low_tail = inside & (numeric < p10) & (p10 > low)
+    high_tail = inside & (numeric > p90) & (high > p90)
+    if np.any(low_tail):
+        edge[low_tail] = _smoothstep_array((numeric[low_tail] - low) / (p10 - low))
+    if np.any(high_tail):
+        edge[high_tail] = 1.0 - _smoothstep_array((numeric[high_tail] - p90) / (high - p90))
+    core = np.exp(-0.5 * ((numeric - center) / sigma) ** 2)
+    weighted = edge * core
+    output[inside] = np.clip(weighted[inside], 0.0, 1.0)
+    return output
+
+
+@dataclass(frozen=True)
+class _CandidateArrays:
+    """Numeric columns for batch eligibility over one candidate list."""
+
+    slope_deg: np.ndarray
+    elevation_gu: np.ndarray
+    water_distance_gu: np.ndarray
+    terrain_z_thu: np.ndarray
+    clearing_value: np.ndarray
+    rock_patch_value: np.ndarray
+    is_road: np.ndarray
+
+
+def _build_candidate_arrays(
+    candidates: Sequence[_Candidate], config: GenerationConfig
+) -> _CandidateArrays:
+    count = len(candidates)
+    slope = np.empty(count, dtype=np.float64)
+    elevation = np.empty(count, dtype=np.float64)
+    water = np.empty(count, dtype=np.float64)
+    terrain_z = np.empty(count, dtype=np.float64)
+    clearing = np.empty(count, dtype=np.float64)
+    rock_patch = np.empty(count, dtype=np.float64)
+    is_road = np.zeros(count, dtype=bool)
+    road_values = set(config.road_raw_vtex_values)
+    for index, candidate in enumerate(candidates):
+        slope[index] = candidate.slope_deg
+        elevation[index] = candidate.terrain_z_gu
+        water[index] = candidate.water_distance_gu
+        terrain_z[index] = candidate.terrain_z_thu
+        clearing[index] = candidate.clearing_value
+        rock_patch[index] = candidate.rock_patch_value
+        is_road[index] = candidate.raw_vtex is not None and candidate.raw_vtex in road_values
+    return _CandidateArrays(
+        slope_deg=slope,
+        elevation_gu=elevation,
+        water_distance_gu=water,
+        terrain_z_thu=terrain_z,
+        clearing_value=clearing,
+        rock_patch_value=rock_patch,
+        is_road=is_road,
+    )
 
 
 @dataclass(frozen=True)
@@ -210,6 +335,8 @@ class GenerationConfig:
     """Bounded deterministic configuration for one scatter block."""
 
     bounds: tuple[int, int, int, int] = TARGET_BOUNDS
+    target_cells: frozenset[tuple[int, int]] | None = None
+    scope_region: str = ""
     master_seed: int = 20260801
     candidate_spacing_gu: float = DEFAULT_CANDIDATE_SPACING_GU
     jitter_gu: float = DEFAULT_JITTER_GU
@@ -237,13 +364,14 @@ class GenerationConfig:
     open_face_orientation_attempts: int = DEFAULT_OPEN_FACE_ORIENTATION_ATTEMPTS
     open_face_neighbor_radius_gu: float = DEFAULT_OPEN_FACE_NEIGHBOR_RADIUS_GU
     open_face_min_embed_gu: float = DEFAULT_OPEN_FACE_MIN_EMBED_GU
+    open_side_cliff_min_slope_deg: float = DEFAULT_OPEN_SIDE_CLIFF_MIN_SLOPE_DEG
     min_embed_gu: float = DEFAULT_MIN_EMBED_GU
     cliff_min_embed_gu: float = DEFAULT_CLIFF_MIN_EMBED_GU
     cliff_min_visible_gu: float = DEFAULT_CLIFF_MIN_VISIBLE_GU
-    # Raw OpenMW VTEX values, not zero-based LTEX table indices.  Raw VTEX 78
-    # therefore resolves to the owning plugin's LTEX INTV 77, but matching is
-    # deliberately performed on the raw value retained by LAND.
-    road_raw_vtex_values: tuple[int, ...] = DEFAULT_ROAD_RAW_VTEX_VALUES
+    # Raw OpenMW VTEX values declared by the active region remap.  An empty
+    # tuple is valid for a wilderness run with no road classes; there is no
+    # global road raw value.
+    road_raw_vtex_values: tuple[int, ...] = ()
     # Cleanup policy is stored as normalized mesh keys so callers cannot
     # accidentally make the rules case- or slash-direction-sensitive.
     quarantined_mesh_keys: frozenset[str] = QUARANTINED_MESH_KEYS
@@ -281,6 +409,12 @@ class GenerationConfig:
             raise ValueError("open-face orientation configuration is invalid")
         if self.open_face_min_embed_gu < 0:
             raise ValueError("open_face_min_embed_gu must be non-negative")
+        if (
+            not math.isfinite(float(self.open_side_cliff_min_slope_deg))
+            or float(self.open_side_cliff_min_slope_deg) < 0.0
+            or float(self.open_side_cliff_min_slope_deg) >= 90.0
+        ):
+            raise ValueError("open_side_cliff_min_slope_deg must be finite degrees in [0,90)")
         if self.min_embed_gu < 0 or self.cliff_min_embed_gu < 0 or self.cliff_min_visible_gu < 0:
             raise ValueError("embedding thresholds must be non-negative")
         if self.tree_clearance_min_horizontal_span_gu <= 0 or self.tree_clearance_margin_gu < 0:
@@ -368,12 +502,26 @@ class OccupancyIndex:
             raise ValueError("occupancy checks need x/y and a non-negative distance")
         x, y = float(point[0]), float(point[1])
         bx, by = self._bin(x), self._bin(y)
-        if (bx, by) in self._buckets[category]:
+        occupied = self._buckets[category]
+        if (bx, by) in occupied:
             return False
         radius = int(math.ceil(float(minimum_distance_gu) / self.bin_size_gu)) + 1
+        # When few bins are occupied (cliff pass, early rock pass), scanning
+        # occupied bins is cheaper than walking a large empty Chebyshev square.
+        # Flora's small radius stays on the square path.
+        square_size = (2 * radius + 1) ** 2
+        if len(occupied) < square_size:
+            for (ix, iy), entries in occupied.items():
+                if abs(ix - bx) > radius or abs(iy - by) > radius:
+                    continue
+                for other_x, other_y, other_distance in entries:
+                    required = max(float(minimum_distance_gu), other_distance)
+                    if math.hypot(x - other_x, y - other_y) < required:
+                        return False
+            return True
         for ix in range(bx - radius, bx + radius + 1):
             for iy in range(by - radius, by + radius + 1):
-                for other_x, other_y, other_distance in self._buckets[category].get((ix, iy), ()):
+                for other_x, other_y, other_distance in occupied.get((ix, iy), ()):
                     required = max(float(minimum_distance_gu), other_distance)
                     if math.hypot(x - other_x, y - other_y) < required:
                         return False
@@ -425,6 +573,13 @@ def _default_open_face_profile() -> dict[str, Any]:
         "open_directions": [],
         "closed_directions": list(_DIRECTION_VECTORS_XY),
         "has_open_geometry": False,
+        "open_axes": [],
+        "vertical_faces": {
+            "up": {"open": False, "triangle_area_fraction": 1.0, "boundary_edge_length_gu": 0.0},
+            "down": {"open": False, "triangle_area_fraction": 1.0, "boundary_edge_length_gu": 0.0},
+        },
+        "bottom_open": False,
+        "top_open": False,
     }
 
 
@@ -444,6 +599,13 @@ def _open_face_profile_for_mesh(
             open_directions = row.get("open_directions", [])
             if not isinstance(open_directions, list) or any(str(value) not in _DIRECTION_VECTORS_XY for value in open_directions):
                 raise ValueError(f"open-face profile has invalid directions: {mesh}")
+            vertical_faces = row.get("vertical_faces", {})
+            if vertical_faces and (
+                not isinstance(vertical_faces, Mapping)
+                or any(axis not in vertical_faces for axis in ("up", "down"))
+                or any(not isinstance(vertical_faces[axis], Mapping) for axis in ("up", "down"))
+            ):
+                raise ValueError(f"open-face profile has invalid vertical faces: {mesh}")
             return row
     raise ValueError(f"open-face profile sidecar is missing: {mesh}")
 
@@ -674,6 +836,8 @@ def _smooth_mask_value(
     master_seed: int,
     grid_gu: float,
     label: str,
+    *,
+    node_cache: dict[tuple[str, int, int], float] | None = None,
 ) -> float:
     if grid_gu <= 0:
         raise ValueError("smooth mask grid must be positive")
@@ -683,6 +847,14 @@ def _smooth_mask_value(
     tx, ty = _smoothstep(gx - ix), _smoothstep(gy - iy)
 
     def node(nx: int, ny: int) -> float:
+        if node_cache is not None:
+            key = (label, nx, ny)
+            cached = node_cache.get(key)
+            if cached is not None:
+                return cached
+            value = random.Random(derive_seed(master_seed, GENERATION_NAMESPACE, label, nx, ny)).random()
+            node_cache[key] = value
+            return value
         return random.Random(derive_seed(master_seed, GENERATION_NAMESPACE, label, nx, ny)).random()
 
     a = node(ix, iy)
@@ -692,10 +864,19 @@ def _smooth_mask_value(
     return (a * (1.0 - tx) + b * tx) * (1.0 - ty) + (c * (1.0 - tx) + d * tx) * ty
 
 
-def clearing_mask_value(x_gu: float, y_gu: float, master_seed: int, grid_gu: float = DEFAULT_CLEARING_GRID_GU) -> float:
+def clearing_mask_value(
+    x_gu: float,
+    y_gu: float,
+    master_seed: int,
+    grid_gu: float = DEFAULT_CLEARING_GRID_GU,
+    *,
+    node_cache: dict[tuple[str, int, int], float] | None = None,
+) -> float:
     """Return a smooth deterministic low-frequency clearing value in [0,1]."""
 
-    return _smooth_mask_value(x_gu, y_gu, master_seed, grid_gu, "clearing")
+    return _smooth_mask_value(
+        x_gu, y_gu, master_seed, grid_gu, "clearing", node_cache=node_cache
+    )
 
 
 def rock_patch_mask_value(
@@ -703,10 +884,21 @@ def rock_patch_mask_value(
     y_gu: float,
     master_seed: int,
     grid_gu: float = DEFAULT_ROCK_PATCH_GRID_GU,
+    *,
+    node_cache: dict[tuple[str, int, int], float] | None = None,
 ) -> float:
     """Return the deterministic smooth mask used to break up rock carpets."""
 
-    return _smooth_mask_value(x_gu, y_gu, master_seed, grid_gu, "rock_patch")
+    return _smooth_mask_value(
+        x_gu, y_gu, master_seed, grid_gu, "rock_patch", node_cache=node_cache
+    )
+
+
+_SLOPE_NEIGHBOR_DIRS = (
+    (-1, -1), (0, -1), (1, -1),
+    (-1, 0), (1, 0),
+    (-1, 1), (0, 1), (1, 1),
+)
 
 
 def downhill_direction_xy(
@@ -717,34 +909,61 @@ def downhill_direction_xy(
 ) -> tuple[float, float]:
     """Return a normalized vector toward the steepest measured ESM-LAND drop."""
 
-    center = height_at_game_position(land_records, position[:2])
-    if center is None:
-        return (0.0, 0.0)
-    center_gu = float(center) * THU_TO_GU
-    best: tuple[float, float, float] | None = None
-    directions = (
-        (-1, -1), (0, -1), (1, -1),
-        (-1, 0), (1, 0),
-        (-1, 1), (0, 1), (1, 1),
+    _, _, downhill = _direct_land_slope_and_downhill(
+        land_records,
+        position,
+        spacing_game_units=spacing_game_units,
     )
-    for dx, dy in directions:
+    return downhill
+
+
+def _direct_land_slope_and_downhill(
+    land_records: Mapping[tuple[int, int], LandRecord],
+    position: Sequence[float],
+    *,
+    spacing_game_units: float = DEFAULT_SLOPE_SPACING_GU,
+) -> tuple[float | None, float | None, tuple[float, float]]:
+    """Sample center + eight neighbors once; return center THU, slope, downhill.
+
+    Matches ``terrain_slope_deg`` and ``downhill_direction_xy`` independently so
+    candidate build can avoid sampling the same stencil twice.
+    """
+
+    if spacing_game_units <= 0 or not math.isfinite(float(spacing_game_units)):
+        raise ValueError("slope spacing must be finite and positive")
+    center_thu = height_at_game_position(land_records, position[:2])
+    if center_thu is None:
+        return None, None, (0.0, 0.0)
+    center_gu = float(center_thu) * THU_TO_GU
+    spacing = float(spacing_game_units)
+    maximum_slope: float | None = None
+    best_downhill: tuple[float, float, float] | None = None
+    for dx, dy in _SLOPE_NEIGHBOR_DIRS:
         neighbor = (
-            float(position[0]) + dx * float(spacing_game_units),
-            float(position[1]) + dy * float(spacing_game_units),
+            float(position[0]) + dx * spacing,
+            float(position[1]) + dy * spacing,
         )
-        height = height_at_game_position(land_records, neighbor)
-        if height is None:
+        neighbor_thu = height_at_game_position(land_records, neighbor)
+        if neighbor_thu is None:
             continue
-        drop = center_gu - float(height) * THU_TO_GU
+        neighbor_gu = float(neighbor_thu) * THU_TO_GU
+        rise_gu = abs(neighbor_gu - center_gu)
+        run_gu = math.hypot(dx * spacing, dy * spacing)
+        slope = math.degrees(math.atan2(rise_gu, run_gu))
+        maximum_slope = slope if maximum_slope is None else max(maximum_slope, slope)
+        drop = center_gu - neighbor_gu
         if drop <= 0.0:
             continue
         length = math.hypot(dx, dy)
-        candidate = (drop / length, float(dx) / length, float(dy) / length)
-        if best is None or candidate[0] > best[0]:
-            best = candidate
-    if best is None:
-        return (0.0, 0.0)
-    return (_round(best[1], 6), _round(best[2], 6))  # type: ignore[return-value]
+        ranked = (drop / length, float(dx) / length, float(dy) / length)
+        if best_downhill is None or ranked[0] > best_downhill[0]:
+            best_downhill = ranked
+    downhill = (
+        (_round(best_downhill[1], 6), _round(best_downhill[2], 6))
+        if best_downhill is not None
+        else (0.0, 0.0)
+    )
+    return float(center_thu), maximum_slope, downhill  # type: ignore[return-value]
 
 
 def _build_water_index(
@@ -814,9 +1033,12 @@ def _build_candidates(
     raw_vtex_counts: Counter[str] = Counter()
     road_candidate_count = 0
     missing_texture_count = 0
+    mask_node_cache: dict[tuple[str, int, int], float] = {}
     for cell_y in range(min_y, max_y + 1):
         for cell_x in range(min_x, max_x + 1):
             cell = (cell_x, cell_y)
+            if config.target_cells is not None and cell not in config.target_cells:
+                continue
             record = land_records.get(cell)
             if record is None or not record.has_heights:
                 raise ValueError(f"target cell {cell} has no VHGT in tamriel.esm LAND")
@@ -831,8 +1053,7 @@ def _build_candidates(
                     local_y = max(1.0, min(CELL_SIZE_GAME_UNITS - 1.0, local_y))
                     x_gu = cell_x * CELL_SIZE_GAME_UNITS + local_x
                     y_gu = cell_y * CELL_SIZE_GAME_UNITS + local_y
-                    terrain_z = height_at_game_position(land_records, (x_gu, y_gu))
-                    slope = terrain_slope_deg(
+                    terrain_z, slope, downhill = _direct_land_slope_and_downhill(
                         land_records,
                         (x_gu, y_gu),
                         spacing_game_units=DEFAULT_SLOPE_SPACING_GU,
@@ -866,18 +1087,16 @@ def _build_candidates(
                             y_gu,
                             config.master_seed,
                             config.clearing_grid_gu,
+                            node_cache=mask_node_cache,
                         ),
                         rock_patch_value=rock_patch_mask_value(
                             x_gu,
                             y_gu,
                             config.master_seed,
                             config.rock_patch_grid_gu,
+                            node_cache=mask_node_cache,
                         ),
-                        downhill_direction_xy=downhill_direction_xy(
-                            land_records,
-                            (x_gu, y_gu),
-                            spacing_game_units=DEFAULT_SLOPE_SPACING_GU,
-                        ),
+                        downhill_direction_xy=downhill,
                         raw_vtex=raw_vtex,
                     )
                     rows.append(candidate)
@@ -1359,6 +1578,84 @@ def large_rock_tree_clearance_violation(
     return None
 
 
+def _large_rock_tree_clearance_aabbs(
+    accepted_rock_cliffs: Sequence[Mapping[str, Any]],
+    *,
+    minimum_horizontal_span_gu: float = TREE_CLEARANCE_MIN_HORIZONTAL_SPAN_GU,
+    margin_gu: float = TREE_CLEARANCE_MARGIN_GU,
+) -> list[tuple[float, float, float, float]]:
+    """Return expanded XY AABBs that participate in tree clearance.
+
+    Same filter order and inclusive expansion as
+    ``large_rock_tree_clearance_violation``; only large-span boxes are kept.
+    """
+
+    threshold = float(minimum_horizontal_span_gu)
+    margin = float(margin_gu)
+    if threshold <= 0.0 or margin < 0.0:
+        raise ValueError("tree clearance inputs are invalid")
+    boxes: list[tuple[float, float, float, float]] = []
+    for row in accepted_rock_cliffs:
+        if str(row.get("category")) not in {"rocks", "cliff"}:
+            continue
+        bbox = row.get("bbox")
+        world_aabb = bbox.get("world_aabb_gu") if isinstance(bbox, Mapping) else None
+        if not isinstance(world_aabb, Mapping):
+            continue
+        try:
+            min_x, max_x, min_y, max_y = _aabb_xy_bounds(world_aabb)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if max(max_x - min_x, max_y - min_y) < threshold:
+            continue
+        boxes.append((min_x - margin, max_x + margin, min_y - margin, max_y + margin))
+    return boxes
+
+
+def _points_inside_any_aabb(
+    points_xy: np.ndarray,
+    expanded_aabbs: Sequence[tuple[float, float, float, float]],
+) -> np.ndarray:
+    """Return a boolean mask of points inside any inclusive expanded AABB."""
+
+    if points_xy.ndim != 2 or points_xy.shape[1] != 2:
+        raise ValueError("points_xy must be an (N, 2) array")
+    blocked = np.zeros(points_xy.shape[0], dtype=bool)
+    if points_xy.shape[0] == 0 or not expanded_aabbs:
+        return blocked
+    xs = points_xy[:, 0]
+    ys = points_xy[:, 1]
+    for min_x, max_x, min_y, max_y in expanded_aabbs:
+        blocked |= (xs >= min_x) & (xs <= max_x) & (ys >= min_y) & (ys <= max_y)
+    return blocked
+
+
+def tree_clearance_blocked_candidate_ids(
+    candidates: Sequence[_Candidate],
+    accepted_rock_cliffs: Sequence[Mapping[str, Any]],
+    *,
+    minimum_horizontal_span_gu: float = TREE_CLEARANCE_MIN_HORIZONTAL_SPAN_GU,
+    margin_gu: float = TREE_CLEARANCE_MARGIN_GU,
+) -> tuple[set[str], list[tuple[float, float, float, float]]]:
+    """Build the tree-clearance blocked ID set via batch AABB tests.
+
+    Equivalent to calling ``large_rock_tree_clearance_violation`` on every
+    candidate and collecting any-hit results; only large AABBs are tested.
+    """
+
+    boxes = _large_rock_tree_clearance_aabbs(
+        accepted_rock_cliffs,
+        minimum_horizontal_span_gu=minimum_horizontal_span_gu,
+        margin_gu=margin_gu,
+    )
+    if not candidates:
+        return set(), boxes
+    points = np.asarray([(c.x_gu, c.y_gu) for c in candidates], dtype=np.float64)
+    mask = _points_inside_any_aabb(points, boxes)
+    blocked = {candidates[index].candidate_id for index in np.flatnonzero(mask)}
+    return blocked, boxes
+
+
 def enumerate_land_texture_tiles(
     world_bbox: Mapping[str, Sequence[float]],
 ) -> list[tuple[int, int]]:
@@ -1402,10 +1699,18 @@ def _land_texture_tile_cell_local(
     return (cell_x, cell_y), (local_tile_x, local_tile_y)
 
 
+# Sentinels for optional road-footprint VTEX tile cache values.
+_ROAD_VTEX_MISSING_LAND = object()
+_ROAD_VTEX_MISSING_VTEX = object()
+
+
 def road_footprint_audit(
     land_records: Mapping[tuple[int, int], LandRecord],
     world_bbox: Mapping[str, Sequence[float]],
     road_raw_vtex_values: Sequence[int],
+    *,
+    detail: bool = True,
+    vtex_cache: dict[tuple[int, int], Any] | None = None,
 ) -> dict[str, Any]:
     """Audit every LAND VTEX tile under one transformed world-space AABB.
 
@@ -1414,11 +1719,17 @@ def road_footprint_audit(
     reads the normalized raw VTEX value, and records road hits.  Missing LAND
     or VTEX is a hard failure: a rock/cliff footprint is never allowed to pass
     merely because the authoritative texture data is unavailable.
+
+    ``detail=False`` keeps the same pass/fail and tile counts without allocating
+    per-tile dictionaries.  Placement uses that path; unit tests keep detail.
+    ``vtex_cache`` optionally memoizes resolved global-tile lookups across many
+    footprint audits in one generation run.
     """
 
-    road_values = tuple(sorted({int(value) for value in road_raw_vtex_values}))
-    if any(value < 0 or value > 65535 for value in road_values):
+    road_set = {int(value) for value in road_raw_vtex_values}
+    if any(value < 0 or value > 65535 for value in road_set):
         raise ValueError("road_raw_vtex_values must contain unsigned 16-bit values")
+    road_values = tuple(sorted(road_set))
 
     minimum = world_bbox.get("min")
     maximum = world_bbox.get("max")
@@ -1443,6 +1754,7 @@ def road_footprint_audit(
         "resolved_tile_count": 0,
         "checked_tiles": [],
         "road_hits": [],
+        "road_hit_count": 0,
         "missing_land_cells": [],
         "missing_vtex_cells": [],
         "missing_land_tile_count": 0,
@@ -1452,7 +1764,6 @@ def road_footprint_audit(
     }
     try:
         min_x, max_x, min_y, max_y = _aabb_xy_bounds(world_bbox)
-        tiles = enumerate_land_texture_tiles(world_bbox)
     except (TypeError, ValueError, OverflowError) as exc:
         audit["failure_reason"] = "invalid_or_degenerate_aabb"
         audit["failure_detail"] = str(exc)
@@ -1468,55 +1779,135 @@ def road_footprint_audit(
         min_tile_y,
         max_tile_y_exclusive,
     ]
-    audit["intersected_tile_count"] = len(tiles)
+    if max_tile_x_exclusive <= min_tile_x or max_tile_y_exclusive <= min_tile_y:
+        audit["failure_reason"] = "invalid_or_degenerate_aabb"
+        return audit
+    audit["intersected_tile_count"] = (max_tile_x_exclusive - min_tile_x) * (
+        max_tile_y_exclusive - min_tile_y
+    )
 
     missing_land_cells: set[tuple[int, int]] = set()
     missing_vtex_cells: set[tuple[int, int]] = set()
     checked_tiles: list[dict[str, Any]] = []
     road_hits: list[dict[str, Any]] = []
+    road_hit_count = 0
     resolved_tile_count = 0
-    for global_tile_x, global_tile_y in tiles:
-        cell, local_tile = _land_texture_tile_cell_local(global_tile_x, global_tile_y)
-        tile: dict[str, Any] = {
-            "global_tile": [global_tile_x, global_tile_y],
-            "cell": [cell[0], cell[1]],
-            "local_tile": [local_tile[0], local_tile[1]],
-            "raw_vtex": None,
-            "status": "ok",
-        }
-        record = land_records.get(cell)
-        if record is None:
-            tile["status"] = "missing_land"
-            missing_land_cells.add(cell)
-            audit["missing_land_tile_count"] += 1
-            checked_tiles.append(tile)
-            continue
-        if not record.has_textures:
-            tile["status"] = "missing_vtex"
-            missing_vtex_cells.add(cell)
-            audit["missing_vtex_tile_count"] += 1
-            checked_tiles.append(tile)
-            continue
-        try:
-            raw_vtex = int(record.texture_index(local_tile[0], local_tile[1]))
-        except (IndexError, TypeError, ValueError, AttributeError):
-            tile["status"] = "missing_vtex"
-            missing_vtex_cells.add(cell)
-            audit["missing_vtex_tile_count"] += 1
-            checked_tiles.append(tile)
-            continue
-        tile["raw_vtex"] = raw_vtex
-        resolved_tile_count += 1
-        checked_tiles.append(tile)
-        if raw_vtex in road_values:
-            hit = dict(tile)
-            hit["status"] = "road"
-            road_hits.append(hit)
+    checked_tile_count = 0
+    missing_land_tile_count = 0
+    missing_vtex_tile_count = 0
+    for global_tile_y in range(min_tile_y, max_tile_y_exclusive):
+        for global_tile_x in range(min_tile_x, max_tile_x_exclusive):
+            cell, local_tile = _land_texture_tile_cell_local(global_tile_x, global_tile_y)
+            checked_tile_count += 1
+            cache_key = (global_tile_x, global_tile_y)
+            cached = vtex_cache.get(cache_key) if vtex_cache is not None else None
+            if cached is _ROAD_VTEX_MISSING_LAND:
+                missing_land_cells.add(cell)
+                missing_land_tile_count += 1
+                if detail:
+                    checked_tiles.append(
+                        {
+                            "global_tile": [global_tile_x, global_tile_y],
+                            "cell": [cell[0], cell[1]],
+                            "local_tile": [local_tile[0], local_tile[1]],
+                            "raw_vtex": None,
+                            "status": "missing_land",
+                        }
+                    )
+                continue
+            if cached is _ROAD_VTEX_MISSING_VTEX:
+                missing_vtex_cells.add(cell)
+                missing_vtex_tile_count += 1
+                if detail:
+                    checked_tiles.append(
+                        {
+                            "global_tile": [global_tile_x, global_tile_y],
+                            "cell": [cell[0], cell[1]],
+                            "local_tile": [local_tile[0], local_tile[1]],
+                            "raw_vtex": None,
+                            "status": "missing_vtex",
+                        }
+                    )
+                continue
+            if isinstance(cached, int):
+                raw_vtex = cached
+            else:
+                record = land_records.get(cell)
+                if record is None:
+                    if vtex_cache is not None:
+                        vtex_cache[cache_key] = _ROAD_VTEX_MISSING_LAND
+                    missing_land_cells.add(cell)
+                    missing_land_tile_count += 1
+                    if detail:
+                        checked_tiles.append(
+                            {
+                                "global_tile": [global_tile_x, global_tile_y],
+                                "cell": [cell[0], cell[1]],
+                                "local_tile": [local_tile[0], local_tile[1]],
+                                "raw_vtex": None,
+                                "status": "missing_land",
+                            }
+                        )
+                    continue
+                if not record.has_textures:
+                    if vtex_cache is not None:
+                        vtex_cache[cache_key] = _ROAD_VTEX_MISSING_VTEX
+                    missing_vtex_cells.add(cell)
+                    missing_vtex_tile_count += 1
+                    if detail:
+                        checked_tiles.append(
+                            {
+                                "global_tile": [global_tile_x, global_tile_y],
+                                "cell": [cell[0], cell[1]],
+                                "local_tile": [local_tile[0], local_tile[1]],
+                                "raw_vtex": None,
+                                "status": "missing_vtex",
+                            }
+                        )
+                    continue
+                try:
+                    raw_vtex = int(record.texture_index(local_tile[0], local_tile[1]))
+                except (IndexError, TypeError, ValueError, AttributeError):
+                    if vtex_cache is not None:
+                        vtex_cache[cache_key] = _ROAD_VTEX_MISSING_VTEX
+                    missing_vtex_cells.add(cell)
+                    missing_vtex_tile_count += 1
+                    if detail:
+                        checked_tiles.append(
+                            {
+                                "global_tile": [global_tile_x, global_tile_y],
+                                "cell": [cell[0], cell[1]],
+                                "local_tile": [local_tile[0], local_tile[1]],
+                                "raw_vtex": None,
+                                "status": "missing_vtex",
+                            }
+                        )
+                    continue
+                if vtex_cache is not None:
+                    vtex_cache[cache_key] = raw_vtex
+            resolved_tile_count += 1
+            is_road = raw_vtex in road_set
+            if is_road:
+                road_hit_count += 1
+            if detail:
+                tile = {
+                    "global_tile": [global_tile_x, global_tile_y],
+                    "cell": [cell[0], cell[1]],
+                    "local_tile": [local_tile[0], local_tile[1]],
+                    "raw_vtex": raw_vtex,
+                    "status": "road" if is_road else "ok",
+                }
+                checked_tiles.append(tile)
+                if is_road:
+                    road_hits.append(tile)
 
     audit["checked_tiles"] = checked_tiles
-    audit["checked_tile_count"] = len(checked_tiles)
+    audit["checked_tile_count"] = checked_tile_count
     audit["resolved_tile_count"] = resolved_tile_count
     audit["road_hits"] = road_hits
+    audit["road_hit_count"] = road_hit_count
+    audit["missing_land_tile_count"] = missing_land_tile_count
+    audit["missing_vtex_tile_count"] = missing_vtex_tile_count
     audit["missing_land_cells"] = [
         [cell[0], cell[1]] for cell in sorted(missing_land_cells, key=lambda value: (value[1], value[0]))
     ]
@@ -1527,7 +1918,7 @@ def road_footprint_audit(
         audit["failure_reason"] = "missing_land"
     elif missing_vtex_cells:
         audit["failure_reason"] = "missing_vtex"
-    elif road_hits:
+    elif road_hit_count:
         audit["failure_reason"] = "road_overlap"
     else:
         audit["passed"] = True
@@ -1537,6 +1928,8 @@ def road_footprint_audit(
 def _compact_road_footprint_audit(audit: Mapping[str, Any]) -> dict[str, Any]:
     """Keep only the passing footprint facts needed on each accepted ref."""
 
+    road_hits = audit.get("road_hits", [])
+    road_hit_count = int(audit.get("road_hit_count", len(road_hits) if isinstance(road_hits, list) else 0))
     return {
         "tile_size_gu": audit.get("tile_size_gu"),
         "tile_alignment": audit.get("tile_alignment"),
@@ -1546,11 +1939,11 @@ def _compact_road_footprint_audit(audit: Mapping[str, Any]) -> dict[str, Any]:
         "checked_tile_count": int(audit.get("checked_tile_count", 0)),
         "resolved_tile_count": int(audit.get("resolved_tile_count", 0)),
         "road_raw_vtex_values": list(audit.get("road_raw_vtex_values", [])),
-        "road_hit_count": len(audit.get("road_hits", [])),
+        "road_hit_count": road_hit_count,
         "road_hit_raw_vtex_values": sorted(
             {
                 int(row["raw_vtex"])
-                for row in audit.get("road_hits", [])
+                for row in road_hits
                 if isinstance(row, Mapping) and row.get("raw_vtex") is not None
             }
         ),
@@ -1559,6 +1952,49 @@ def _compact_road_footprint_audit(audit: Mapping[str, Any]) -> dict[str, Any]:
         "passed": bool(audit.get("passed")),
         "failure_reason": audit.get("failure_reason"),
     }
+
+
+class RockNeighborIndex:
+    """Uniform grid over accepted rock/cliff centers for open-face queries."""
+
+    def __init__(self, bin_size_gu: float = 512.0) -> None:
+        if bin_size_gu <= 0:
+            raise ValueError("rock neighbor bin size must be positive")
+        self.bin_size_gu = float(bin_size_gu)
+        self._bins: dict[tuple[int, int], list[tuple[str, float, float, float]]] = defaultdict(list)
+
+    def _bin(self, value: float) -> int:
+        return math.floor(float(value) / self.bin_size_gu)
+
+    def add(self, ref_id: str, x_gu: float, y_gu: float, radius_gu: float) -> None:
+        self._bins[(self._bin(x_gu), self._bin(y_gu))].append(
+            (str(ref_id), float(x_gu), float(y_gu), float(radius_gu))
+        )
+
+    def query(
+        self,
+        x_gu: float,
+        y_gu: float,
+        radius_gu: float,
+        profile_radius_gu: float,
+    ) -> list[tuple[str, tuple[float, float], float]]:
+        bx, by = self._bin(x_gu), self._bin(y_gu)
+        reach = int(math.ceil(float(radius_gu) / self.bin_size_gu)) + 1
+        targets: list[tuple[str, tuple[float, float], float]] = []
+        for ix in range(bx - reach, bx + reach + 1):
+            for iy in range(by - reach, by + reach + 1):
+                for ref_id, other_x, other_y, target_radius in self._bins.get((ix, iy), ()):
+                    dx = other_x - x_gu
+                    dy = other_y - y_gu
+                    distance = math.hypot(dx, dy)
+                    if distance <= 1e-9 or distance > radius_gu:
+                        continue
+                    occlusion_limit = max(512.0, 1.75 * (float(profile_radius_gu) + target_radius))
+                    if distance > min(float(radius_gu), occlusion_limit):
+                        continue
+                    targets.append((ref_id, (dx / distance, dy / distance), distance))
+        targets.sort(key=lambda row: (row[0]))
+        return targets
 
 
 def _rotate_xy_direction(direction: Sequence[float], rotation: Sequence[float]) -> tuple[float, float]:
@@ -1574,12 +2010,117 @@ def _rotate_xy_direction(direction: Sequence[float], rotation: Sequence[float]) 
     return (x_z / length, y_z / length)
 
 
+def _pose_first_open_face_yaw(
+    local_direction: Sequence[float],
+    target_direction: Sequence[float],
+    *,
+    rotation_x: float = 0.0,
+    rotation_y: float = 0.0,
+) -> float:
+    """Return TES3 rotz that aims ``local_direction`` at ``target_direction``.
+
+    For upright yaw-only poses the engine uses ``Rz(-rotz)``, so
+    ``rotz = atan2(local_y, local_x) - atan2(target_y, target_x)``.  Non-zero
+    measured X/Y tilt falls back to a dense 1-D search that maximizes the same
+    world-XY dot product ``_open_face_orientation_decision`` uses.
+    """
+
+    lx, ly = float(local_direction[0]), float(local_direction[1])
+    tx, ty = float(target_direction[0]), float(target_direction[1])
+    local_len = math.hypot(lx, ly)
+    target_len = math.hypot(tx, ty)
+    if local_len <= 1e-9 or target_len <= 1e-9:
+        return 0.0
+    lx, ly = lx / local_len, ly / local_len
+    tx, ty = tx / target_len, ty / target_len
+    rx = float(rotation_x)
+    ry = float(rotation_y)
+    if abs(rx) <= 1e-12 and abs(ry) <= 1e-12:
+        return math.atan2(ly, lx) - math.atan2(ty, tx)
+    best_rotz = 0.0
+    best_dot = -math.inf
+    steps = 360
+    for index in range(steps):
+        rotz = (2.0 * math.pi * index) / steps
+        world = _rotate_xy_direction((lx, ly), (rx, ry, rotz))
+        dot = world[0] * tx + world[1] * ty
+        if dot > best_dot:
+            best_dot = dot
+            best_rotz = rotz
+    return best_rotz
+
+
+def _open_face_pose_targets(
+    profile: _Species,
+    candidate: _Candidate,
+    placements: Sequence[Mapping[str, Any]],
+    config: GenerationConfig,
+    profile_radius_gu: float,
+    neighbor_index: RockNeighborIndex | None = None,
+) -> list[tuple[str, str, tuple[float, float], float | None]]:
+    """Return downhill-then-neighbor targets for pose-first open-face yaw."""
+
+    targets: list[tuple[str, str, tuple[float, float], float | None]] = []
+    downhill = candidate.downhill_direction_xy
+    if math.hypot(*downhill) > 1e-9:
+        targets.append(("terrain", "terrain", downhill, None))
+    targets.extend(
+        ("adjacent_accepted_rock", ref_id, direction, distance)
+        for ref_id, direction, distance in _rock_neighbor_targets(
+            candidate,
+            placements,
+            config.open_face_neighbor_radius_gu,
+            profile_radius_gu,
+            neighbor_index=neighbor_index,
+        )
+    )
+    return targets
+
+
+def _sample_pose_first_tilt(
+    profile: _Species, rng: random.Random, slope_deg: float
+) -> tuple[float, float, str, str]:
+    """Sample measured X/Y once for pose-first; yaw is solved separately."""
+
+    conditioned = _rotation_bin(profile, float(slope_deg))
+    distribution = conditioned if conditioned and int(conditioned.get("count", 0)) > 0 else profile.rotation_distribution
+    mode_counts = distribution.get("mode_counts", {}) if isinstance(distribution, Mapping) else {}
+    if not isinstance(mode_counts, Mapping):
+        mode_counts = {}
+    z_count = int(mode_counts.get("z_only", 0))
+    full_count = int(mode_counts.get("full", 0))
+    if full_count <= 0:
+        mode = "z_only"
+    elif z_count <= 0:
+        mode = "full"
+    else:
+        mode = "full" if rng.random() * (z_count + full_count) >= z_count else "z_only"
+    source = "measured_slope_bin" if conditioned and distribution is conditioned else "measured_mesh_distribution"
+    # Consume the measured Z draw so the profile RNG stream stays aligned with
+    # measured sampling even though pose-first replaces Z with a solved yaw.
+    _sample_quantile(
+        distribution.get("z_radians", {}) if isinstance(distribution, Mapping) else {},
+        rng,
+        fallback=0.0,
+    )
+    if mode == "z_only":
+        return 0.0, 0.0, mode, f"{source}+pose_first"
+    x = _sample_quantile(distribution.get("x_radians", {}), rng, fallback=0.0)
+    y = _sample_quantile(distribution.get("y_radians", {}), rng, fallback=0.0)
+    return float(x), float(y), mode, f"{source}+pose_first"
+
+
 def _rock_neighbor_targets(
     candidate: _Candidate,
     placements: Sequence[Mapping[str, Any]],
     radius_gu: float,
     profile_radius_gu: float,
+    neighbor_index: RockNeighborIndex | None = None,
 ) -> list[tuple[str, tuple[float, float], float]]:
+    if neighbor_index is not None:
+        return neighbor_index.query(
+            candidate.x_gu, candidate.y_gu, radius_gu, profile_radius_gu
+        )
     targets: list[tuple[str, tuple[float, float], float]] = []
     for row in placements:
         if str(row.get("category")) not in {"rocks", "cliff"}:
@@ -1628,12 +2169,16 @@ def _open_face_orientation_decision(
     placements: Sequence[Mapping[str, Any]],
     config: GenerationConfig,
     profile_radius_gu: float,
+    neighbor_index: RockNeighborIndex | None = None,
 ) -> dict[str, Any]:
     open_directions = [
         str(value)
         for value in profile.open_face_profile.get("open_directions", [])
         if str(value) in _DIRECTION_VECTORS_XY
     ]
+    bottom_open = bool(profile.open_face_profile.get("bottom_open", False))
+    top_open = bool(profile.open_face_profile.get("top_open", False))
+    open_axes = [str(value) for value in profile.open_face_profile.get("open_axes", [])]
     base: dict[str, Any] = {
         "profile_status": str(profile.open_face_profile.get("status", "not_supplied")),
         "open_directions_local": open_directions,
@@ -1643,7 +2188,24 @@ def _open_face_orientation_decision(
         "alignment_dot": None,
         "target_direction_xy": None,
         "target_distance_gu": None,
+        "bottom_open": bottom_open,
+        "top_open": top_open,
+        "open_axes": open_axes,
+        "bottom_seating": None,
     }
+    if bottom_open:
+        # A bottom cavity may be tilted, but it must remain a downward-facing
+        # resting surface.  The later terrain gate supplies the actual burial.
+        up_world_z = transformed_local_up_world_z(rotation)
+        seated = up_world_z >= math.cos(math.radians(45.0))
+        base["bottom_seating"] = {
+            "local_up_world_z": _round(up_world_z, 6),
+            "minimum_local_up_world_z": _round(math.cos(math.radians(45.0)), 6),
+            "passed": seated,
+        }
+        if not seated:
+            base["action"] = "unsafe_orientation"
+            return base
     if not open_directions:
         return base
     targets: list[tuple[str, str, tuple[float, float], float | None]] = []
@@ -1653,7 +2215,11 @@ def _open_face_orientation_decision(
     targets.extend(
         ("adjacent_accepted_rock", ref_id, direction, distance)
         for ref_id, direction, distance in _rock_neighbor_targets(
-            candidate, placements, config.open_face_neighbor_radius_gu, profile_radius_gu
+            candidate,
+            placements,
+            config.open_face_neighbor_radius_gu,
+            profile_radius_gu,
+            neighbor_index=neighbor_index,
         )
     )
     if not targets:
@@ -1707,6 +2273,7 @@ def _new_placement(
     face_link: Mapping[str, Any] | None = None,
     cliff_footprint_audit: Mapping[str, Any] | None = None,
     road_footprint_audit: Mapping[str, Any] | None = None,
+    cliff_seating_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     placement_z = candidate.terrain_z_gu + z_offset_gu
     placement: dict[str, Any] = {
@@ -1780,7 +2347,7 @@ def _new_placement(
             "passed": local_up_world_z > 0.0
             and (max_local_up_tilt is None or local_up_tilt <= max_local_up_tilt),
         }
-    if profile.category == "cliff":
+    if profile.category == "cliff" and cliff_seating_evidence is None:
         visible_height_gu = float(world_bbox["max"][2]) - float(candidate.terrain_z_gu)
         placement["cliff_surface_gate"] = {
             "sampled_z_offset_gu": _round(z_offset_gu),
@@ -1801,29 +2368,58 @@ def _new_placement(
         placement["cliff_footprint_relief"] = dict(cliff_footprint_audit)
     if road_footprint_audit is not None:
         placement["road_footprint_audit"] = dict(road_footprint_audit)
+    if cliff_seating_evidence is not None:
+        evidence = dict(cliff_seating_evidence)
+        evidence.pop("world_bbox", None)
+        placement["cliff_seating"] = evidence
     return placement
 
 
 def _profile_candidate_rows(
-    all_candidates: Sequence[_Candidate], profile: _Species, config: GenerationConfig
+    all_candidates: Sequence[_Candidate],
+    profile: _Species,
+    config: GenerationConfig,
+    arrays: _CandidateArrays | None = None,
 ) -> list[tuple[_Candidate, float, float]]:
-    rows: list[tuple[_Candidate, float, float]] = []
-    for candidate in all_candidates:
-        # Apply the road marker before any profile weighting.  This keeps raw
-        # VTEX 78 out of flora, normal rocks, and cliffs rather than relying on
-        # a mesh-specific terrain envelope to happen to reject it.
-        if _candidate_has_road_raw_vtex(candidate, config):
-            continue
-        if profile.category == "rocks" and candidate.rock_patch_value < config.rock_patch_threshold:
-            continue
-        weight = _candidate_condition_weight(candidate, profile)
-        if weight <= 0.0:
-            continue
-        mask_value = candidate.clearing_value
-        if profile.flora_role == "tree" and mask_value >= config.clearing_threshold:
-            weight *= config.clearing_tree_factor
-        rows.append((candidate, weight, mask_value))
-    return rows
+    if not all_candidates:
+        return []
+    view = arrays if arrays is not None else _build_candidate_arrays(all_candidates, config)
+    if len(view.slope_deg) != len(all_candidates):
+        raise ValueError("candidate arrays length must match candidate list")
+
+    eligible = ~view.is_road
+    if profile.category == "rocks":
+        eligible &= view.rock_patch_value >= config.rock_patch_threshold
+    if not profile.shallow_water:
+        eligible &= view.terrain_z_thu > 0.0
+    if not np.any(eligible):
+        return []
+
+    weights = np.zeros(len(all_candidates), dtype=np.float64)
+    # Evaluate envelopes only on candidates that survive road/patch/water gates.
+    active = np.flatnonzero(eligible)
+    slope_w = envelope_weight_array(view.slope_deg[active], profile.conditions["slope_deg"])
+    elev_w = envelope_weight_array(view.elevation_gu[active], profile.conditions["elevation_gu"])
+    water_w = envelope_weight_array(
+        view.water_distance_gu[active], profile.conditions["water_distance_gu"]
+    )
+    active_weights = float(profile.frequency) * slope_w * elev_w * water_w
+    if profile.flora_role == "tree":
+        clearing = view.clearing_value[active]
+        active_weights = np.where(
+            clearing >= config.clearing_threshold,
+            active_weights * config.clearing_tree_factor,
+            active_weights,
+        )
+    positive = active_weights > 0.0
+    if not np.any(positive):
+        return []
+    selected = active[positive]
+    weights[selected] = active_weights[positive]
+    return [
+        (all_candidates[index], float(weights[index]), float(view.clearing_value[index]))
+        for index in selected
+    ]
 
 
 def _nearest_face_link(candidate: _Candidate, cliff_points: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1866,10 +2462,20 @@ def _place_profile(
     road_footprint_rejections: Counter[str],
     tree_clearance_blocked_ids: set[str] | None = None,
     constrained_tilt_rejections: Counter[str] | None = None,
+    clearing_index: ClearingIndex | None = None,
+    candidate_rows: list[tuple[_Candidate, float, float]] | None = None,
+    neighbor_index: RockNeighborIndex | None = None,
+    road_vtex_cache: dict[tuple[int, int], Any] | None = None,
+    cliff_seating: CliffSeatingRuntime | None = None,
+    seating_stats: dict[str, Any] | None = None,
 ) -> tuple[int, Counter[str]]:
     if desired <= 0:
         return 0, Counter()
-    rows = _profile_candidate_rows(all_candidates, profile, config)
+    rows = (
+        candidate_rows
+        if candidate_rows is not None
+        else _profile_candidate_rows(all_candidates, profile, config)
+    )
     failures: Counter[str] = Counter()
     if not rows:
         failures["no_measured_suitable_candidates"] = desired
@@ -1886,6 +2492,7 @@ def _place_profile(
         key=lambda index: -math.log(max(rng.random(), 1e-15)) / max(float(rows[index][1]), 1e-12),
     )
     ordinary_cursor = 0
+    profile_radius = _profile_horizontal_radius(bbox)
     if cliff and cliff_points:
         # Prefer candidates near an already accepted cliff so the measured
         # giant quota forms faces when the LAND slope/geometry permits it.
@@ -1926,7 +2533,27 @@ def _place_profile(
                 if rock_cap is not None and rock_counts_by_cell[candidate.cell] >= rock_cap:
                     continue
             if cliff:
-                if candidate.terrain_z_thu <= 0.0 or candidate.slope_deg < config.cliff_min_slope_deg:
+                slope_floor = float(config.cliff_min_slope_deg)
+                seated_cliff = (
+                    cliff_seating is not None and cliff_seating.has_profile(profile.key)
+                )
+                if not seated_cliff:
+                    open_side_directions = [
+                        str(value)
+                        for value in profile.open_face_profile.get("open_directions", [])
+                        if str(value) in _DIRECTION_VECTORS_XY
+                    ]
+                    if open_side_directions:
+                        slope_floor = max(slope_floor, float(config.open_side_cliff_min_slope_deg))
+                if candidate.terrain_z_thu <= 0.0:
+                    continue
+                if candidate.slope_deg < slope_floor:
+                    if (
+                        not seated_cliff
+                        and open_side_directions
+                        and candidate.slope_deg >= float(config.cliff_min_slope_deg)
+                    ):
+                        failures["open_side_cliff_slope"] += 1
                     continue
                 if config.cliff_max_water_distance_gu is not None and candidate.water_distance_gu > config.cliff_max_water_distance_gu:
                     continue
@@ -1938,10 +2565,20 @@ def _place_profile(
                 minimum_distance,
             ):
                 continue
-            orientation_attempt_limit = (
-                config.open_face_orientation_attempts
-                if profile.category in {"rocks", "cliff"}
-                else 1
+            if clearing_index is not None and profile.category == "flora":
+                if clearing_index.blocks_point(candidate.x_gu, candidate.y_gu):
+                    failures["clearing_blocked"] += 1
+                    blocked.add(candidate.candidate_id)
+                    continue
+            if clearing_index is not None and profile.category in {"rocks", "cliff"}:
+                if clearing_index.in_city_domain_point(candidate.x_gu, candidate.y_gu):
+                    failures["city_domain_rocks_banned"] += 1
+                    blocked.add(candidate.candidate_id)
+                    continue
+            seated_cliff = (
+                cliff
+                and cliff_seating is not None
+                and cliff_seating.has_profile(profile.key)
             )
             accepted_values: tuple[
                 tuple[float, float, float],
@@ -1950,78 +2587,238 @@ def _place_profile(
                 float,
                 float,
                 dict[str, Any],
-                dict[str, Any],
+                dict[str, Any] | None,
                 float,
                 float,
                 float,
                 dict[str, Any] | None,
                 dict[str, Any],
+                dict[str, Any] | None,
             ] | None = None
             last_open_face_decision: dict[str, Any] | None = None
             geometry_rejected = False
-            for orientation_index in range(orientation_attempt_limit):
-                rotation, mode, rotation_source = _sample_rotation(profile, rng, candidate.slope_deg)
-                local_up_world_z = (
-                    transformed_local_up_world_z(rotation)
-                    if profile.category in {"rocks", "cliff"}
-                    else None
+            if seated_cliff:
+                # Observed-pose seating replaces the sampled-rotation paths:
+                # one recorded member, fixed sample set, one Z solve, then the
+                # existing relief and road audits.
+                attempt_started = time.perf_counter()
+                member = cliff_seating.select_member(profile.key, candidate.slope_deg, rng)
+                outcome, payload = cliff_seating.evaluate_attempt(
+                    profile_key=profile.key,
+                    member=member,
+                    candidate_x=candidate.x_gu,
+                    candidate_y=candidate.y_gu,
+                    candidate_terrain_z_gu=candidate.terrain_z_gu,
+                    candidate_slope_deg=candidate.slope_deg,
+                    candidate_downhill_xy=candidate.downhill_direction_xy,
+                    land_records=land_records,
+                    bbox=bbox,
+                    clearing_index=clearing_index,
                 )
-                if local_up_world_z is not None and local_up_world_z <= 0.0:
-                    # This is an orientation-attempt rejection, not a
-                    # category-wide tilt ban: moderate X/Y tilt and arbitrary
-                    # Z yaw remain eligible, while the existing bounded loop
-                    # samples another measured orientation.
-                    failures["flipped_orientation"] += 1
+                if seating_stats is not None:
+                    seating_stats["attempts"] += 1
+                    seating_stats["evaluator_seconds"] += time.perf_counter() - attempt_started
+                if outcome == "reject":
+                    reason = str(payload.get("reason", "unknown"))
+                    if seating_stats is not None:
+                        seating_stats["rejections"][reason] += 1
+                    failures[f"cliff_seating_{reason}"] += 1
+                    blocked.add(candidate.candidate_id)
                     continue
-                max_local_up_tilt = config.max_local_up_tilt_degrees_by_mesh.get(profile.key)
-                if max_local_up_tilt is not None:
-                    local_up_tilt = transformed_local_up_tilt_degrees(rotation)
-                    if local_up_tilt > max_local_up_tilt:
-                        failures["constrained_tilt_exceeded"] += 1
-                        if constrained_tilt_rejections is not None:
-                            constrained_tilt_rejections[profile.key] += 1
+                rotation = tuple(payload.pop("rotation_radians"))
+                world_bbox = payload.pop("world_bbox")
+                scale = float(payload["recorded_scale"])
+                z_offset = float(payload["solved_z_gu"]) - candidate.terrain_z_gu
+                mode = "observed_pose_member"
+                rotation_source = (
+                    f"cliff_seating:{payload['profile_id']}:"
+                    f"{payload['mode_id']}:{payload['member_ref_id']}"
+                )
+                open_face_decision = None
+                bottom_embed = float(candidate.terrain_z_gu) - float(world_bbox["min"][2])
+                top_above = float(world_bbox["max"][2]) - float(candidate.terrain_z_gu)
+                cliff_relief_audit = cliff_footprint_relief_audit(
+                    land_records,
+                    world_bbox,
+                    config.cliff_min_slope_deg,
+                )
+                if not cliff_relief_audit["passed"]:
+                    relief_reason = str(
+                        cliff_relief_audit.get("failure_reason") or "insufficient_relief"
+                    )
+                    failures[f"cliff_footprint_{relief_reason}"] += 1
+                    blocked.add(candidate.candidate_id)
+                    continue
+                footprint_audit = road_footprint_audit(
+                    land_records,
+                    world_bbox,
+                    config.road_raw_vtex_values,
+                    detail=False,
+                    vtex_cache=road_vtex_cache,
+                )
+                road_hit_count = int(
+                    footprint_audit.get(
+                        "road_hit_count",
+                        len(footprint_audit.get("road_hits", [])),
+                    )
+                )
+                road_footprint_stats["checked_attempts"] += 1
+                road_footprint_stats["checked_tiles"] += int(footprint_audit["checked_tile_count"])
+                road_footprint_stats["resolved_tiles"] += int(footprint_audit["resolved_tile_count"])
+                road_footprint_stats["road_hit_tiles"] += road_hit_count
+                road_footprint_stats["missing_land_tiles"] += int(footprint_audit["missing_land_tile_count"])
+                road_footprint_stats["missing_vtex_tiles"] += int(footprint_audit["missing_vtex_tile_count"])
+                if road_hit_count:
+                    road_footprint_stats["road_hit_attempts"] += 1
+                if footprint_audit["missing_land_cells"]:
+                    road_footprint_stats["missing_land_attempts"] += 1
+                if footprint_audit["missing_vtex_cells"]:
+                    road_footprint_stats["missing_vtex_attempts"] += 1
+                if not footprint_audit["passed"]:
+                    road_reason = str(footprint_audit.get("failure_reason") or "unknown")
+                    road_footprint_stats["rejected_attempts"] += 1
+                    road_footprint_rejections[road_reason] += 1
+                    failures[f"road_footprint_{road_reason}"] += 1
+                    blocked.add(candidate.candidate_id)
+                    continue
+                road_footprint_stats["passed_attempts"] += 1
+                if seating_stats is not None:
+                    seating_stats["accepted"] += 1
+                    seating_stats["member_refs_used"].add(member.ref_id)
+                    seating_stats["modes_used"].add(member.mode_id)
+                accepted_values = (
+                    rotation,
+                    mode,
+                    rotation_source,
+                    scale,
+                    z_offset,
+                    world_bbox,
+                    None,
+                    bottom_embed,
+                    top_above,
+                    float(transformed_local_up_world_z(rotation)),
+                    cliff_relief_audit,
+                    _compact_road_footprint_audit(footprint_audit),
+                    payload,
+                )
+            elif profile.category in {"rocks", "cliff"} and bool(
+                profile.open_face_profile.get("open_directions")
+            ):
+                open_side_directions = [
+                    str(value)
+                    for value in profile.open_face_profile.get("open_directions", [])
+                    if str(value) in _DIRECTION_VECTORS_XY
+                ]
+                use_pose_first = True
+                pose_targets = _open_face_pose_targets(
+                    profile,
+                    candidate,
+                    placements,
+                    config,
+                    profile_radius,
+                    neighbor_index=neighbor_index,
+                )
+                if not pose_targets:
+                    open_face_decision = {
+                        "profile_status": str(profile.open_face_profile.get("status", "not_supplied")),
+                        "open_directions_local": open_side_directions,
+                        "orientation_attempts": 0,
+                        "orientation_source": "pose_first",
+                        "action": "no_target_skip",
+                        "target_ref_id": None,
+                        "alignment_dot": None,
+                        "target_direction_xy": None,
+                        "target_distance_gu": None,
+                        "bottom_open": bool(profile.open_face_profile.get("bottom_open", False)),
+                        "top_open": bool(profile.open_face_profile.get("top_open", False)),
+                        "open_axes": [
+                            str(value) for value in profile.open_face_profile.get("open_axes", [])
+                        ],
+                        "bottom_seating": None,
+                        "chosen_open_direction": None,
+                    }
+                    last_open_face_decision = open_face_decision
+                    failures["open_face_no_safe_orientation"] += 1
+                    blocked.add(candidate.candidate_id)
+                    continue
+                target_kind, target_ref, target_direction, target_distance = pose_targets[0]
+                del target_kind, target_ref, target_distance
+                tilt_x, tilt_y, mode, rotation_source = _sample_pose_first_tilt(
+                    profile, rng, candidate.slope_deg
+                )
+                orientation_attempts = 0
+                for direction_name in open_side_directions:
+                    orientation_attempts += 1
+                    local = _DIRECTION_VECTORS_XY[direction_name]
+                    rotz = _pose_first_open_face_yaw(
+                        local,
+                        target_direction,
+                        rotation_x=tilt_x,
+                        rotation_y=tilt_y,
+                    )
+                    rotation = (_round(tilt_x, 6), _round(tilt_y, 6), _round(rotz, 6))
+                    local_up_world_z = transformed_local_up_world_z(rotation)
+                    if local_up_world_z <= 0.0:
+                        failures["flipped_orientation"] += 1
                         continue
-                open_face_decision = (
-                    _open_face_orientation_decision(
+                    max_local_up_tilt = config.max_local_up_tilt_degrees_by_mesh.get(profile.key)
+                    if max_local_up_tilt is not None:
+                        local_up_tilt = transformed_local_up_tilt_degrees(rotation)
+                        if local_up_tilt > max_local_up_tilt:
+                            failures["constrained_tilt_exceeded"] += 1
+                            if constrained_tilt_rejections is not None:
+                                constrained_tilt_rejections[profile.key] += 1
+                            continue
+                    open_face_decision = _open_face_orientation_decision(
                         profile,
                         candidate,
                         rotation,
                         placements,
                         config,
-                        _profile_horizontal_radius(bbox),
+                        profile_radius,
+                        neighbor_index=neighbor_index,
                     )
-                    if profile.category in {"rocks", "cliff"}
-                    else {"action": "not_a_rock", "profile_status": "not_applicable", "open_directions_local": []}
-                )
-                open_face_decision["orientation_attempts"] = orientation_index + 1
-                last_open_face_decision = open_face_decision
-                if profile.category in {"rocks", "cliff"} and open_face_decision.get("action") not in {
-                    "closed_profile",
-                    "terrain_downslope",
-                    "adjacent_rock",
-                }:
-                    continue
-                scale = _sample_quantile(profile.scale_distribution, rng, fallback=1.0)
-                if not math.isfinite(scale) or scale <= 0.0:
-                    failures["invalid_measured_scale"] += 1
-                    break
-                z_offset = _sample_quantile(profile.z_offset_distribution, rng, fallback=0.0)
-                position = [candidate.x_gu, candidate.y_gu, candidate.terrain_z_gu + z_offset]
-                world_bbox = transformed_bbox(bbox, position, rotation, scale)
-                footprint_audit: dict[str, Any] | None = None
-                if profile.category in {"rocks", "cliff"}:
+                    open_face_decision["orientation_attempts"] = orientation_attempts
+                    open_face_decision["orientation_source"] = "pose_first"
+                    open_face_decision["chosen_open_direction"] = direction_name
+                    last_open_face_decision = open_face_decision
+                    if open_face_decision.get("action") not in {
+                        "terrain_downslope",
+                        "adjacent_rock",
+                    }:
+                        continue
+                    scale = _sample_quantile(profile.scale_distribution, rng, fallback=1.0)
+                    if not math.isfinite(scale) or scale <= 0.0:
+                        failures["invalid_measured_scale"] += 1
+                        break
+                    z_offset = _sample_quantile(profile.z_offset_distribution, rng, fallback=0.0)
+                    position = [candidate.x_gu, candidate.y_gu, candidate.terrain_z_gu + z_offset]
+                    world_bbox = transformed_bbox(bbox, position, rotation, scale)
+                    if clearing_index is not None and profile.category in {"rocks", "cliff"}:
+                        min_x, max_x, min_y, max_y = _aabb_xy_bounds(world_bbox)
+                        if clearing_index.blocks_aabb(min_x, min_y, max_x, max_y):
+                            failures["rock_clearing_blocked"] += 1
+                            continue
                     footprint_audit = road_footprint_audit(
                         land_records,
                         world_bbox,
                         config.road_raw_vtex_values,
+                        detail=False,
+                        vtex_cache=road_vtex_cache,
+                    )
+                    road_hit_count = int(
+                        footprint_audit.get(
+                            "road_hit_count",
+                            len(footprint_audit.get("road_hits", [])),
+                        )
                     )
                     road_footprint_stats["checked_attempts"] += 1
                     road_footprint_stats["checked_tiles"] += int(footprint_audit["checked_tile_count"])
                     road_footprint_stats["resolved_tiles"] += int(footprint_audit["resolved_tile_count"])
-                    road_footprint_stats["road_hit_tiles"] += len(footprint_audit["road_hits"])
+                    road_footprint_stats["road_hit_tiles"] += road_hit_count
                     road_footprint_stats["missing_land_tiles"] += int(footprint_audit["missing_land_tile_count"])
                     road_footprint_stats["missing_vtex_tiles"] += int(footprint_audit["missing_vtex_tile_count"])
-                    if footprint_audit["road_hits"]:
+                    if road_hit_count:
                         road_footprint_stats["road_hit_attempts"] += 1
                     if footprint_audit["missing_land_cells"]:
                         road_footprint_stats["missing_land_attempts"] += 1
@@ -2034,56 +2831,221 @@ def _place_profile(
                         failures[f"road_footprint_{failure_reason}"] += 1
                         continue
                     road_footprint_stats["passed_attempts"] += 1
-                minimum_embed = config.cliff_min_embed_gu if cliff else config.min_embed_gu
-                if open_face_decision.get("action") in {"terrain_downslope", "adjacent_rock"}:
-                    minimum_embed = max(minimum_embed, config.open_face_min_embed_gu)
-                intersects, bottom_embed, top_above = _surface_intersects_terrain(
-                    world_bbox,
-                    candidate.terrain_z_gu,
-                    minimum_embed=minimum_embed,
-                )
-                if not intersects:
-                    geometry_rejected = True
-                    continue
-                if cliff and top_above < config.cliff_min_visible_gu:
-                    failures["cliff_fully_buried"] += 1
-                    geometry_rejected = True
-                    continue
-                if not cliff and profile.category == "rocks" and bbox.get("volume_class") == "small" and bottom_embed < config.min_embed_gu:
-                    failures["small_rock_not_embedded"] += 1
-                    geometry_rejected = True
-                    continue
-                cliff_relief_audit: dict[str, Any] | None = None
-                if cliff:
-                    cliff_relief_audit = cliff_footprint_relief_audit(
-                        land_records,
+                    minimum_embed = config.cliff_min_embed_gu if cliff else config.min_embed_gu
+                    if open_face_decision.get("action") in {"terrain_downslope", "adjacent_rock"} or bool(
+                        profile.open_face_profile.get("bottom_open")
+                    ):
+                        minimum_embed = max(minimum_embed, config.open_face_min_embed_gu)
+                    intersects, bottom_embed, top_above = _surface_intersects_terrain(
                         world_bbox,
-                        config.cliff_min_slope_deg,
+                        candidate.terrain_z_gu,
+                        minimum_embed=minimum_embed,
                     )
-                    if not cliff_relief_audit["passed"]:
-                        failure_reason = str(cliff_relief_audit.get("failure_reason") or "insufficient_relief")
-                        failures[f"cliff_footprint_{failure_reason}"] += 1
+                    if not intersects:
+                        geometry_rejected = True
+                        if bool(profile.open_face_profile.get("bottom_open")):
+                            failures["bottom_open_not_embedded"] += 1
                         continue
-                accepted_values = (
-                    rotation,
-                    mode,
-                    rotation_source,
-                    scale,
-                    z_offset,
-                    world_bbox,
-                    open_face_decision,
-                    bottom_embed,
-                    top_above,
-                    float(local_up_world_z) if local_up_world_z is not None else 0.0,
-                    cliff_relief_audit,
-                    _compact_road_footprint_audit(footprint_audit)
-                    if footprint_audit is not None
-                    else {},
-                )
-                break
+                    if cliff and top_above < config.cliff_min_visible_gu:
+                        failures["cliff_fully_buried"] += 1
+                        geometry_rejected = True
+                        continue
+                    if (
+                        not cliff
+                        and profile.category == "rocks"
+                        and bbox.get("volume_class") == "small"
+                        and bottom_embed < config.min_embed_gu
+                    ):
+                        failures["small_rock_not_embedded"] += 1
+                        geometry_rejected = True
+                        continue
+                    cliff_relief_audit: dict[str, Any] | None = None
+                    if cliff:
+                        cliff_relief_audit = cliff_footprint_relief_audit(
+                            land_records,
+                            world_bbox,
+                            config.cliff_min_slope_deg,
+                        )
+                        if not cliff_relief_audit["passed"]:
+                            failure_reason = str(
+                                cliff_relief_audit.get("failure_reason") or "insufficient_relief"
+                            )
+                            failures[f"cliff_footprint_{failure_reason}"] += 1
+                            continue
+                    accepted_values = (
+                        rotation,  # type: ignore[assignment]
+                        mode,
+                        rotation_source,
+                        scale,
+                        z_offset,
+                        world_bbox,
+                        open_face_decision,
+                        bottom_embed,
+                        top_above,
+                        float(local_up_world_z),
+                        cliff_relief_audit,
+                        _compact_road_footprint_audit(footprint_audit),
+                        None,
+                    )
+                    break
+            else:
+                orientation_attempt_limit = 1
+                for orientation_index in range(orientation_attempt_limit):
+                    rotation, mode, rotation_source = _sample_rotation(profile, rng, candidate.slope_deg)
+                    local_up_world_z = (
+                        transformed_local_up_world_z(rotation)
+                        if profile.category in {"rocks", "cliff"}
+                        else None
+                    )
+                    if local_up_world_z is not None and local_up_world_z <= 0.0:
+                        failures["flipped_orientation"] += 1
+                        continue
+                    max_local_up_tilt = config.max_local_up_tilt_degrees_by_mesh.get(profile.key)
+                    if max_local_up_tilt is not None:
+                        local_up_tilt = transformed_local_up_tilt_degrees(rotation)
+                        if local_up_tilt > max_local_up_tilt:
+                            failures["constrained_tilt_exceeded"] += 1
+                            if constrained_tilt_rejections is not None:
+                                constrained_tilt_rejections[profile.key] += 1
+                            continue
+                    open_face_decision = (
+                        _open_face_orientation_decision(
+                            profile,
+                            candidate,
+                            rotation,
+                            placements,
+                            config,
+                            profile_radius,
+                            neighbor_index=neighbor_index,
+                        )
+                        if profile.category in {"rocks", "cliff"}
+                        else {
+                            "action": "not_a_rock",
+                            "profile_status": "not_applicable",
+                            "open_directions_local": [],
+                        }
+                    )
+                    open_face_decision["orientation_attempts"] = orientation_index + 1
+                    open_face_decision["orientation_source"] = "measured_sample"
+                    last_open_face_decision = open_face_decision
+                    if profile.category in {"rocks", "cliff"} and open_face_decision.get("action") not in {
+                        "closed_profile",
+                        "terrain_downslope",
+                        "adjacent_rock",
+                    }:
+                        continue
+                    scale = _sample_quantile(profile.scale_distribution, rng, fallback=1.0)
+                    if not math.isfinite(scale) or scale <= 0.0:
+                        failures["invalid_measured_scale"] += 1
+                        break
+                    z_offset = _sample_quantile(profile.z_offset_distribution, rng, fallback=0.0)
+                    position = [candidate.x_gu, candidate.y_gu, candidate.terrain_z_gu + z_offset]
+                    world_bbox = transformed_bbox(bbox, position, rotation, scale)
+                    if clearing_index is not None and profile.category in {"rocks", "cliff"}:
+                        min_x, max_x, min_y, max_y = _aabb_xy_bounds(world_bbox)
+                        if clearing_index.blocks_aabb(min_x, min_y, max_x, max_y):
+                            failures["rock_clearing_blocked"] += 1
+                            continue
+                    footprint_audit: dict[str, Any] | None = None
+                    if profile.category in {"rocks", "cliff"}:
+                        footprint_audit = road_footprint_audit(
+                            land_records,
+                            world_bbox,
+                            config.road_raw_vtex_values,
+                            detail=False,
+                            vtex_cache=road_vtex_cache,
+                        )
+                        road_hit_count = int(
+                            footprint_audit.get(
+                                "road_hit_count",
+                                len(footprint_audit.get("road_hits", [])),
+                            )
+                        )
+                        road_footprint_stats["checked_attempts"] += 1
+                        road_footprint_stats["checked_tiles"] += int(footprint_audit["checked_tile_count"])
+                        road_footprint_stats["resolved_tiles"] += int(footprint_audit["resolved_tile_count"])
+                        road_footprint_stats["road_hit_tiles"] += road_hit_count
+                        road_footprint_stats["missing_land_tiles"] += int(footprint_audit["missing_land_tile_count"])
+                        road_footprint_stats["missing_vtex_tiles"] += int(footprint_audit["missing_vtex_tile_count"])
+                        if road_hit_count:
+                            road_footprint_stats["road_hit_attempts"] += 1
+                        if footprint_audit["missing_land_cells"]:
+                            road_footprint_stats["missing_land_attempts"] += 1
+                        if footprint_audit["missing_vtex_cells"]:
+                            road_footprint_stats["missing_vtex_attempts"] += 1
+                        if not footprint_audit["passed"]:
+                            failure_reason = str(footprint_audit.get("failure_reason") or "unknown")
+                            road_footprint_stats["rejected_attempts"] += 1
+                            road_footprint_rejections[failure_reason] += 1
+                            failures[f"road_footprint_{failure_reason}"] += 1
+                            continue
+                        road_footprint_stats["passed_attempts"] += 1
+                    minimum_embed = config.cliff_min_embed_gu if cliff else config.min_embed_gu
+                    if open_face_decision.get("action") in {"terrain_downslope", "adjacent_rock"} or bool(
+                        profile.open_face_profile.get("bottom_open")
+                    ):
+                        minimum_embed = max(minimum_embed, config.open_face_min_embed_gu)
+                    intersects, bottom_embed, top_above = _surface_intersects_terrain(
+                        world_bbox,
+                        candidate.terrain_z_gu,
+                        minimum_embed=minimum_embed,
+                    )
+                    if not intersects:
+                        geometry_rejected = True
+                        if bool(profile.open_face_profile.get("bottom_open")):
+                            failures["bottom_open_not_embedded"] += 1
+                        continue
+                    if cliff and top_above < config.cliff_min_visible_gu:
+                        failures["cliff_fully_buried"] += 1
+                        geometry_rejected = True
+                        continue
+                    if (
+                        not cliff
+                        and profile.category == "rocks"
+                        and bbox.get("volume_class") == "small"
+                        and bottom_embed < config.min_embed_gu
+                    ):
+                        failures["small_rock_not_embedded"] += 1
+                        geometry_rejected = True
+                        continue
+                    cliff_relief_audit = None
+                    if cliff:
+                        cliff_relief_audit = cliff_footprint_relief_audit(
+                            land_records,
+                            world_bbox,
+                            config.cliff_min_slope_deg,
+                        )
+                        if not cliff_relief_audit["passed"]:
+                            failure_reason = str(
+                                cliff_relief_audit.get("failure_reason") or "insufficient_relief"
+                            )
+                            failures[f"cliff_footprint_{failure_reason}"] += 1
+                            continue
+                    accepted_values = (
+                        rotation,
+                        mode,
+                        rotation_source,
+                        scale,
+                        z_offset,
+                        world_bbox,
+                        open_face_decision,
+                        bottom_embed,
+                        top_above,
+                        float(local_up_world_z) if local_up_world_z is not None else 0.0,
+                        cliff_relief_audit,
+                        _compact_road_footprint_audit(footprint_audit)
+                        if footprint_audit is not None
+                        else {},
+                        None,
+                    )
+                    break
             if accepted_values is None:
                 if profile.category in {"rocks", "cliff"} and last_open_face_decision is not None:
-                    if last_open_face_decision.get("action") not in {"closed_profile", "terrain_downslope", "adjacent_rock"}:
+                    if last_open_face_decision.get("action") not in {
+                        "closed_profile",
+                        "terrain_downslope",
+                        "adjacent_rock",
+                    }:
                         failures["open_face_no_safe_orientation"] += 1
                 if geometry_rejected:
                     failures["surface_geometry_rejection"] += 1
@@ -2102,8 +3064,16 @@ def _place_profile(
                 _local_up_world_z,
                 cliff_relief_audit,
                 compact_road_footprint_audit,
+                seating_evidence,
             ) = accepted_values
-            if profile.category in {"rocks", "cliff"} and open_face_decision.get("action") in {"terrain_downslope", "adjacent_rock"}:
+            if (
+                open_face_decision is not None
+                and profile.category in {"rocks", "cliff"}
+                and open_face_decision.get("action") in {
+                    "terrain_downslope",
+                    "adjacent_rock",
+                }
+            ):
                 rotation_source = f"{rotation_source}+open_face_rule"
             ref_id = f"{pass_name.lower()}_{profile.category}_{ordinal_start + placed:05d}"
             face_link = _nearest_face_link(candidate, cliff_points) if cliff else None
@@ -2128,7 +3098,13 @@ def _place_profile(
                 road_footprint_audit=compact_road_footprint_audit
                 if profile.category in {"rocks", "cliff"}
                 else None,
+                cliff_seating_evidence=seating_evidence,
             )
+            if seating_stats is not None and seating_evidence is not None:
+                margin = float(seating_evidence["stability_margin_gu"])
+                previous = seating_stats["worst_margin_by_mesh"].get(profile.key)
+                if previous is None or margin < previous[0]:
+                    seating_stats["worst_margin_by_mesh"][profile.key] = (margin, ref_id)
             placements.append(placement)
             used_ids.add(candidate.candidate_id)
             occupancy.add("rocks" if cliff or profile.category == "rocks" else "flora", (candidate.x_gu, candidate.y_gu), minimum_distance)
@@ -2136,6 +3112,24 @@ def _place_profile(
                 cliff_points.append(placement)
             if profile.category in {"rocks", "cliff"}:
                 rock_counts_by_cell[candidate.cell] += 1
+                if neighbor_index is not None:
+                    world_min = world_bbox.get("min")
+                    world_max = world_bbox.get("max")
+                    if (
+                        isinstance(world_min, Sequence)
+                        and isinstance(world_max, Sequence)
+                        and len(world_min) >= 2
+                        and len(world_max) >= 2
+                    ):
+                        target_radius = 0.5 * math.hypot(
+                            float(world_max[0]) - float(world_min[0]),
+                            float(world_max[1]) - float(world_min[1]),
+                        )
+                    else:
+                        target_radius = profile_radius
+                    neighbor_index.add(
+                        ref_id, candidate.x_gu, candidate.y_gu, target_radius
+                    )
             placed += 1
             success = True
             break
@@ -2223,11 +3217,40 @@ def generate_scatter_document(
     open_face_profiles: Mapping[str, Any] | None = None,
     open_face_source: str = "output/rock_openface_profiles.json",
     baseline_document: Mapping[str, Any] | None = None,
+    clearing: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None,
+    edited_land_source: str | None = None,
+    cliff_seating_config: Mapping[str, Any] | None = None,
+    cliff_seating_profiles: Mapping[str, Any] | None = None,
+    timing_logger: Callable[[str, float, float, Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Generate a deterministic Falkreath block from direct LAND and measured data."""
+    """Generate a deterministic settlement block from direct LAND and measured data."""
 
-    main_profiles, cliff_profiles, giant_keys = _build_species(
-        scatter_analysis, cliff_analysis, open_face_profiles
+    overall_started = time.perf_counter()
+
+    if (cliff_seating_config is None) != (cliff_seating_profiles is None):
+        raise ValueError(
+            "cliff seating config and profiles must be supplied together"
+        )
+
+    def phase_done(phase: str, started: float, **details: Any) -> None:
+        if timing_logger is None:
+            return
+        now = time.perf_counter()
+        timing_logger(phase, now - started, now - overall_started, details)
+
+    def timed_rows(phase: str, fn: Callable[[], Any], **details: Any) -> Any:
+        started = time.perf_counter()
+        result = fn()
+        phase_done(phase, started, **details)
+        return result
+
+    clearing_index: ClearingIndex | MultiClearingIndex | None = None
+    if clearing is not None:
+        clearing_index = build_clearing_index(clearing)
+
+    main_profiles, cliff_profiles, giant_keys = timed_rows(
+        "build_species",
+        lambda: _build_species(scatter_analysis, cliff_analysis, open_face_profiles),
     )
     profiles_before_quarantine = list(main_profiles) + list(cliff_profiles)
     quarantined_profiles = [
@@ -2235,12 +3258,89 @@ def generate_scatter_document(
     ]
     main_profiles = [profile for profile in main_profiles if profile.key not in config.quarantined_mesh_keys]
     cliff_profiles = [profile for profile in cliff_profiles if profile.key not in config.quarantined_mesh_keys]
-    water_index, water_summary = _build_water_index(land_records, config)
-    candidates_by_cell, candidate_summary = _build_candidates(land_records, water_index, config)
-    target_cells = [(x, y) for y in range(config.bounds[2], config.bounds[3] + 1) for x in range(config.bounds[0], config.bounds[1] + 1)]
+
+    # Cliff seating preflight runs before candidate construction: profile and
+    # analysis provenance must match, and quarantined / zero-eligible-mode
+    # meshes leave quota allocation before any candidate is built.  The
+    # measured-frequency ratio that sets the cliff TARGET uses the
+    # pre-exclusion totals: quota redistributes across the remaining eligible
+    # meshes, the target itself does not shrink.
+    measured_cliff_total_unfiltered = sum(profile.frequency for profile in cliff_profiles)
+    seating_runtime: CliffSeatingRuntime | None = None
+    seating_preflight_started = time.perf_counter()
+    if cliff_seating_config is not None:
+        seating_runtime = CliffSeatingRuntime(
+            cliff_seating_config,
+            cliff_seating_profiles,
+            cliff_analysis,
+            quarantined_keys=config.quarantined_mesh_keys,
+        )
+        profile_excluded = {
+            key for key in seating_runtime.excluded_meshes
+        }
+        removed_seating = [
+            profile for profile in cliff_profiles if profile.key in profile_excluded
+        ]
+        cliff_profiles = [
+            profile for profile in cliff_profiles if profile.key not in profile_excluded
+        ]
+        if not cliff_profiles:
+            raise ValueError("cliff seating left no eligible cliff profiles")
+    else:
+        removed_seating = []
+    seating_preflight = None
+    if seating_runtime is not None:
+        seating_preflight = {
+            "profile_id": seating_runtime.profile_id,
+            "matched_mesh_count": len(seating_runtime.mesh_states) + len(seating_runtime.excluded_meshes),
+            "eligible_meshes": sorted(seating_runtime.mesh_states),
+            "profile_excluded_meshes": dict(sorted(seating_runtime.excluded_meshes.items())),
+            "manually_quarantined_meshes": dict(sorted(seating_runtime.quarantined_meshes.items())),
+            "removed_measured_frequency": {
+                "profile_excluded": sum(seating_runtime.excluded_meshes.values()),
+                "manually_quarantined": sum(seating_runtime.quarantined_meshes.values()),
+            },
+            "eligible_mode_count": sum(
+                len(state.members) for state in seating_runtime.mesh_states.values()
+            ),
+        }
+    phase_done(
+        "preflight.cliff_seating",
+        seating_preflight_started,
+        enabled=seating_runtime is not None,
+        removed_profiles=len(removed_seating),
+    )
+    water_index, water_summary = timed_rows(
+        "build_water_index", lambda: _build_water_index(land_records, config),
+        land_cells=len(land_records),
+    )
+    candidates_by_cell, candidate_summary = timed_rows(
+        "build_candidates", lambda: _build_candidates(land_records, water_index, config),
+        candidate_spacing_gu=config.candidate_spacing_gu,
+    )
+    target_started = time.perf_counter()
+    target_cells = sorted(
+        config.target_cells
+        if config.target_cells is not None
+        else {
+            (x, y)
+            for y in range(config.bounds[2], config.bounds[3] + 1)
+            for x in range(config.bounds[0], config.bounds[1] + 1)
+        },
+        key=lambda cell: (cell[1], cell[0]),
+    )
     all_candidates = [candidate for cell in target_cells for candidate in candidates_by_cell[cell]]
+    phase_done(
+        "select_target_cells",
+        target_started,
+        target_cells=len(target_cells),
+        candidates=len(all_candidates),
+    )
     if not all_candidates:
         raise ValueError("target block has no valid direct-LAND candidates")
+    arrays_started = time.perf_counter()
+    candidate_arrays = _build_candidate_arrays(all_candidates, config)
+    phase_done("build_candidate_arrays", arrays_started, candidates=len(all_candidates))
 
     density = scatter_analysis.get("density", {})
     wilderness = density.get("wilderness", {}) if isinstance(density, Mapping) else {}
@@ -2255,7 +3355,11 @@ def generate_scatter_document(
     baseline_flora_total = int(round(target_flora_per_cell * len(target_cells)))
     target_rocks_total = int(round(target_rocks_per_cell * len(target_cells)))
     measured_rock_total = sum(profile.frequency for profile in main_profiles if profile.category == "rocks") + sum(profile.frequency for profile in cliff_profiles)
-    measured_cliff_total = sum(profile.frequency for profile in cliff_profiles)
+    if seating_runtime is not None:
+        measured_cliff_total = measured_cliff_total_unfiltered
+        measured_rock_total += sum(profile.frequency for profile in removed_seating)
+    else:
+        measured_cliff_total = sum(profile.frequency for profile in cliff_profiles)
     target_cliffs = int(round(target_rocks_total * measured_cliff_total / max(1, measured_rock_total)))
     if config.target_cliffs_per_cell is not None:
         target_cliffs = int(round(float(config.target_cliffs_per_cell) * len(target_cells)))
@@ -2288,6 +3392,7 @@ def generate_scatter_document(
     }
 
     occupancy = OccupancyIndex()
+    rock_neighbor_index = RockNeighborIndex()
     used_flora: set[str] = set()
     used_rocks: set[str] = set()
     rock_counts_by_cell: Counter[tuple[int, int]] = Counter()
@@ -2298,6 +3403,7 @@ def generate_scatter_document(
     road_footprint_stats: Counter[str] = Counter()
     road_footprint_rejections: Counter[str] = Counter()
     constrained_tilt_rejections: Counter[str] = Counter()
+    road_vtex_cache: dict[tuple[int, int], Any] = {}
     bbox_cache_by_key = {normalize_mesh_key(str(key)): value for key, value in (bbox_cache.get("meshes", {}) if isinstance(bbox_cache.get("meshes", {}), Mapping) else {}).items()}
 
     def profile_bbox(profile: _Species) -> dict[str, Any]:
@@ -2306,17 +3412,56 @@ def generate_scatter_document(
             row = _bbox_row(bbox_cache, profile.mesh)
         return bbox_info(row)
 
+    profile_row_cache: dict[str, list[tuple[_Candidate, float, float]]] = {}
+
+    def profile_rows(profile: _Species, phase: str) -> list[tuple[_Candidate, float, float]]:
+        cached = profile_row_cache.get(profile.key)
+        if cached is not None:
+            return cached
+        rows = timed_rows(
+            phase,
+            lambda: _profile_candidate_rows(
+                all_candidates, profile, config, arrays=candidate_arrays
+            ),
+            mesh=profile.mesh,
+            category=profile.category,
+        )
+        profile_row_cache[profile.key] = rows
+        return rows
+
     # Cliffs are allocated by the measured share of all rock refs, then placed
     # first.  The face affinity is only a continuity preference; every actual
     # acceptance still comes from that mesh's own envelopes and geometry.
     cliff_eligible: set[str] = set()
+    cliff_eligibility_started = time.perf_counter()
     for profile in cliff_profiles:
-        if _profile_candidate_rows(all_candidates, profile, config):
+        if profile_rows(profile, "eligibility.cliff_profile"):
             cliff_eligible.add(profile.key)
+    phase_done(
+        "eligibility.cliff_profiles",
+        cliff_eligibility_started,
+        profiles=len(cliff_profiles),
+        eligible=len(cliff_eligible),
+    )
     cliff_quotas = _quota_counts(target_cliffs, cliff_profiles, eligible=cliff_eligible)
     cliff_order = sorted(cliff_profiles, key=lambda profile: (cliff_quotas[profile.key], profile.key))
     cliff_ordinals = 0
+    cliff_placement_seconds = 0.0
+    seating_stats: dict[str, Any] | None = (
+        {
+            "attempts": 0,
+            "rejections": Counter(),
+            "accepted": 0,
+            "evaluator_seconds": 0.0,
+            "worst_margin_by_mesh": {},
+            "member_refs_used": set(),
+            "modes_used": set(),
+        }
+        if seating_runtime is not None
+        else None
+    )
     for profile in cliff_order:
+        placement_started = time.perf_counter()
         placed, profile_failures = _place_profile(
             profile,
             cliff_quotas[profile.key],
@@ -2337,24 +3482,109 @@ def generate_scatter_document(
             road_footprint_stats=road_footprint_stats,
             road_footprint_rejections=road_footprint_rejections,
             constrained_tilt_rejections=constrained_tilt_rejections,
+            clearing_index=clearing_index,
+            candidate_rows=profile_row_cache.get(profile.key),
+            neighbor_index=rock_neighbor_index,
+            road_vtex_cache=road_vtex_cache,
+            cliff_seating=seating_runtime,
+            seating_stats=seating_stats,
         )
+        phase_done(
+            "placement.cliff_profile",
+            placement_started,
+            mesh=profile.mesh,
+            quota=cliff_quotas[profile.key],
+            placed=placed,
+        )
+        cliff_placement_seconds += time.perf_counter() - placement_started
         cliff_ordinals += placed
         failures.update({f"cliff:{profile.key}:{key}": value for key, value in profile_failures.items()})
     cliffs = [row for row in placements if row["pass"] == "A"]
     cliff_count = len(cliffs)
 
+    cliff_seating_audit = None
+    if seating_stats is not None:
+        worst_margin_by_mesh = {
+            key: {"stability_margin_gu": _round(value[0], 3), "ref_id": value[1]}
+            for key, value in sorted(seating_stats["worst_margin_by_mesh"].items())
+        }
+        z_adjustments = [
+            float(row["cliff_seating"]["z_adjustment_gu"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+        ]
+        embed_mins = [
+            float(row["cliff_seating"]["support_embed_min_gu"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+        ]
+        embed_maxs = [
+            float(row["cliff_seating"]["support_embed_max_gu"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+        ]
+        cover_margins = [
+            float(row["cliff_seating"]["lateral_cover_margin_gu"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+            and row["cliff_seating"].get("lateral_cover_margin_gu") is not None
+        ]
+        front_margins = [
+            float(row["cliff_seating"]["visible_front_margin_gu"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+        ]
+        residuals = [
+            float(row["cliff_seating"]["rotation_roundtrip_residual"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+        ]
+        alignment_dots = [
+            float(row["cliff_seating"]["lateral_alignment_dot"])
+            for row in cliffs
+            if isinstance(row.get("cliff_seating"), Mapping)
+            and row["cliff_seating"].get("lateral_alignment_dot") is not None
+        ]
+        cliff_seating_audit = {
+            **(seating_preflight or {}),
+            "target_refs": target_cliffs,
+            "placed_refs": cliff_count,
+            "attempt_count": seating_stats["attempts"],
+            "accepted_count": seating_stats["accepted"],
+            "modes_used_count": len(seating_stats["modes_used"]),
+            "source_members_used_count": len(seating_stats["member_refs_used"]),
+            "rejections": dict(sorted(seating_stats["rejections"].items())),
+            "z_adjustment_gu": _distribution_from_values(z_adjustments),
+            "support_embed_min_gu": _distribution_from_values(embed_mins),
+            "support_embed_max_gu": _distribution_from_values(embed_maxs),
+            "lateral_cover_margin_gu": _distribution_from_values(cover_margins),
+            "visible_front_margin_gu": _distribution_from_values(front_margins),
+            "rotation_roundtrip_residual": _distribution_from_values(residuals),
+            "lateral_alignment_dot": _distribution_from_values(alignment_dots),
+            "worst_margin_ref_by_mesh": worst_margin_by_mesh,
+            "seating_evaluator_seconds": _round(seating_stats["evaluator_seconds"], 6),
+            "cliff_placement_seconds_total": _round(cliff_placement_seconds, 6),
+        }
+
     # All remaining rock density is allocated to ordinary, non-giant meshes.
     normal_profiles = [profile for profile in main_profiles if profile.category == "rocks"]
     normal_rock_target = max(0, target_rocks_total - cliff_count)
+    normal_eligibility_started = time.perf_counter()
     normal_eligible = {
-        profile.key
-        for profile in normal_profiles
-        if _profile_candidate_rows(all_candidates, profile, config)
+        profile.key for profile in normal_profiles
+        if profile_rows(profile, "eligibility.rock_profile")
     }
+    phase_done(
+        "eligibility.rock_profiles",
+        normal_eligibility_started,
+        profiles=len(normal_profiles),
+        eligible=len(normal_eligible),
+    )
     normal_quotas = _quota_counts(normal_rock_target, normal_profiles, eligible=normal_eligible)
     normal_order = sorted(normal_profiles, key=lambda profile: (normal_quotas[profile.key], profile.key))
     rock_ordinals = 0
     for profile in normal_order:
+        placement_started = time.perf_counter()
         placed, profile_failures = _place_profile(
             profile,
             normal_quotas[profile.key],
@@ -2375,35 +3605,57 @@ def generate_scatter_document(
             road_footprint_stats=road_footprint_stats,
             road_footprint_rejections=road_footprint_rejections,
             constrained_tilt_rejections=constrained_tilt_rejections,
+            clearing_index=clearing_index,
+            candidate_rows=profile_row_cache.get(profile.key),
+            neighbor_index=rock_neighbor_index,
+            road_vtex_cache=road_vtex_cache,
+        )
+        phase_done(
+            "placement.rock_profile",
+            placement_started,
+            mesh=profile.mesh,
+            quota=normal_quotas[profile.key],
+            placed=placed,
         )
         rock_ordinals += placed
         failures.update({f"rocks:{profile.key}:{key}": value for key, value in profile_failures.items()})
 
     # Rocks and cliffs are complete before flora begins.  Build the clearance
-    # index once from those accepted transformed AABBs so every tree profile
-    # sees the same geometric exclusion and the rejection count is not
+    # blocked set once from those accepted transformed AABBs so every tree
+    # profile sees the same geometric exclusion and the rejection count is not
     # dependent on profile iteration order.
     accepted_rock_cliff_rows = [
         row for row in placements if row.get("category") in {"rocks", "cliff"}
     ]
-    tree_clearance_blocked_ids = {
-        candidate.candidate_id
-        for candidate in all_candidates
-        if large_rock_tree_clearance_violation(
-            (candidate.x_gu, candidate.y_gu),
-            accepted_rock_cliff_rows,
-            minimum_horizontal_span_gu=config.tree_clearance_min_horizontal_span_gu,
-            margin_gu=config.tree_clearance_margin_gu,
-        )
-        is not None
-    }
+    tree_clearance_started = time.perf_counter()
+    tree_clearance_blocked_ids, tree_clearance_aabbs = tree_clearance_blocked_candidate_ids(
+        all_candidates,
+        accepted_rock_cliff_rows,
+        minimum_horizontal_span_gu=config.tree_clearance_min_horizontal_span_gu,
+        margin_gu=config.tree_clearance_margin_gu,
+    )
+    phase_done(
+        "tree_clearance_index",
+        tree_clearance_started,
+        candidates=len(all_candidates),
+        blocked=len(tree_clearance_blocked_ids),
+        accepted_rock_cliff_rows=len(accepted_rock_cliff_rows),
+        large_aabb_count=len(tree_clearance_aabbs),
+    )
 
     flora_profiles = [profile for profile in main_profiles if profile.category == "flora"]
+    flora_eligibility_started = time.perf_counter()
     flora_eligible = {
         profile.key
         for profile in flora_profiles
-        if _profile_candidate_rows(all_candidates, profile, config)
+        if profile_rows(profile, "eligibility.flora_profile")
     }
+    phase_done(
+        "eligibility.flora_profiles",
+        flora_eligibility_started,
+        profiles=len(flora_profiles),
+        eligible=len(flora_eligible),
+    )
     flora_quotas, flora_density_split = _flora_quota_counts(
         baseline_flora_total,
         flora_profiles,
@@ -2413,6 +3665,7 @@ def generate_scatter_document(
     flora_order = sorted(flora_profiles, key=lambda profile: (flora_quotas[profile.key], profile.key))
     flora_ordinals = 0
     for profile in flora_order:
+        placement_started = time.perf_counter()
         placed, profile_failures = _place_profile(
             profile,
             flora_quotas[profile.key],
@@ -2434,10 +3687,20 @@ def generate_scatter_document(
             road_footprint_rejections=road_footprint_rejections,
             tree_clearance_blocked_ids=tree_clearance_blocked_ids,
             constrained_tilt_rejections=constrained_tilt_rejections,
+            clearing_index=clearing_index,
+            candidate_rows=profile_row_cache.get(profile.key),
+        )
+        phase_done(
+            "placement.flora_profile",
+            placement_started,
+            mesh=profile.mesh,
+            quota=flora_quotas[profile.key],
+            placed=placed,
         )
         flora_ordinals += placed
         failures.update({f"flora:{profile.key}:{key}": value for key, value in profile_failures.items()})
 
+    assembly_started = time.perf_counter()
     placements.sort(key=lambda row: (row["cell"][1], row["cell"][0], 0 if row["pass"] == "A" else 1, row["ref_id"]))
     cells: list[dict[str, Any]] = []
     for cell in target_cells:
@@ -2464,6 +3727,12 @@ def generate_scatter_document(
             }
         )
     actual_stats = [row["stats"] for row in cells]
+    phase_done(
+        "assemble_cells",
+        assembly_started,
+        cells=len(cells),
+        placements=len(placements),
+    )
     actual_means = {
         "flora_refs": sum(row["flora_refs"] for row in actual_stats) / len(actual_stats),
         "tree_refs": sum(row["tree_refs"] for row in actual_stats) / len(actual_stats),
@@ -2537,6 +3806,7 @@ def generate_scatter_document(
         and abs(actual_means["rock_refs"] - target_rocks_per_cell) <= target_rocks_per_cell * 0.2,
     }
 
+    audit_started = time.perf_counter()
     profiles = main_profiles + cliff_profiles
     rows_by_profile: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for row in placements:
@@ -2574,6 +3844,13 @@ def generate_scatter_document(
         )
         adherence_by_mesh[profile.key] = stats
         generated_stats[profile.key] = stats
+    phase_done(
+        "build_profile_adherence",
+        audit_started,
+        profiles=len(profiles),
+        placements=len(placements),
+    )
+    post_audit_started = time.perf_counter()
 
     tree_by_clear = Counter()
     undergrowth_by_clear = Counter()
@@ -2601,6 +3878,15 @@ def generate_scatter_document(
         str(row.get("open_face", {}).get("action", "not_recorded"))
         for row in rock_rows
     )
+    open_face_orientation_sources = Counter(
+        str(row.get("open_face", {}).get("orientation_source", "not_recorded"))
+        for row in rock_rows
+    )
+    open_face_chosen_octants = Counter(
+        str(row.get("open_face", {}).get("chosen_open_direction"))
+        for row in rock_rows
+        if row.get("open_face", {}).get("chosen_open_direction")
+    )
     open_face_profile_count = sum(
         1
         for profile in main_profiles + cliff_profiles
@@ -2613,6 +3899,9 @@ def generate_scatter_document(
     )
     open_face_no_safe_count = sum(
         value for key, value in failures.items() if str(key).endswith(":open_face_no_safe_orientation")
+    )
+    open_side_cliff_slope_rejects = sum(
+        value for key, value in failures.items() if str(key).endswith(":open_side_cliff_slope")
     )
     flat_slope_max = float(rock_density_caps.get("flat_slope_max_deg", 8.0))
     low_slope_max = float(rock_density_caps.get("low_slope_max_deg", config.low_rock_slope_max_deg))
@@ -2640,12 +3929,20 @@ def generate_scatter_document(
     shore_tree_refs = [row for row in shore_refs if row["category"] == "flora" and row["flora_role"] == "tree"]
     shore_undergrowth_refs = [row for row in shore_refs if row["category"] == "flora" and row["flora_role"] != "tree"]
     tree_profiles = [profile for profile in main_profiles if profile.category == "flora" and profile.flora_role == "tree"]
+    shore_hits_started = time.perf_counter()
+    # Cached tree-profile rows already exclude road centers; count shore strip hits.
     shore_tree_profile_candidates = sum(
         1
         for profile in tree_profiles
-        for candidate in shore_candidates
-        if not _candidate_has_road_raw_vtex(candidate, config)
-        if _candidate_condition_weight(candidate, profile) > 0.0
+        for candidate, _weight, _mask in profile_row_cache.get(profile.key, ())
+        if candidate.water_distance_gu <= shore_threshold_gu
+    )
+    phase_done(
+        "audit.shore_tree_profile_hits",
+        shore_hits_started,
+        tree_profiles=len(tree_profiles),
+        shore_candidates=len(shore_candidates),
+        hits=shore_tree_profile_candidates,
     )
     shore_tree_slopes = [float(row["terrain"]["slope_deg"]) for row in shore_tree_refs]
     shore_tree_water = [float(row["terrain"]["distance_to_water_gu"]) for row in shore_tree_refs]
@@ -2671,19 +3968,22 @@ def generate_scatter_document(
     road_candidates = [
         candidate for candidate in all_candidates if _candidate_has_road_raw_vtex(candidate, config)
     ]
+    road_reject_started = time.perf_counter()
+    # Equivalent to the previous nested profile x candidate road comprehension:
+    # each profile rejects every road-centered candidate before weighting.
     road_profile_rejections_by_category = {
-        category: sum(
-            1
-            for profile in profiles
-            for candidate in all_candidates
-            if _candidate_has_road_raw_vtex(candidate, config)
-        )
-        for category, profiles in (
+        category: len(road_candidates) * len(category_profiles)
+        for category, category_profiles in (
             ("flora", flora_profiles),
             ("rocks", normal_profiles),
             ("cliff", cliff_profiles),
         )
     }
+    phase_done(
+        "audit.road_profile_rejections",
+        road_reject_started,
+        road_candidates=len(road_candidates),
+    )
     road_placed_refs = [
         row for row in placements if row.get("terrain", {}).get("raw_vtex") in config.road_raw_vtex_values
     ]
@@ -2750,17 +4050,18 @@ def generate_scatter_document(
             "tree_upright_rule" in str(row.get("rotation_source", "")) for row in tree_rows
         ),
     }
-    tree_clearance_violations = [
-        row
-        for row in tree_rows
-        if large_rock_tree_clearance_violation(
-            row["position_gu"],
-            rock_cliff_rows,
-            minimum_horizontal_span_gu=config.tree_clearance_min_horizontal_span_gu,
-            margin_gu=config.tree_clearance_margin_gu,
+    tree_clearance_audit_started = time.perf_counter()
+    if tree_rows:
+        tree_points = np.asarray(
+            [(float(row["position_gu"][0]), float(row["position_gu"][1])) for row in tree_rows],
+            dtype=np.float64,
         )
-        is not None
-    ]
+        tree_violation_mask = _points_inside_any_aabb(tree_points, tree_clearance_aabbs)
+        tree_clearance_violations = [
+            row for index, row in enumerate(tree_rows) if bool(tree_violation_mask[index])
+        ]
+    else:
+        tree_clearance_violations = []
     large_rock_cliff_rows = []
     for row in rock_cliff_rows:
         bbox = row.get("bbox")
@@ -2773,19 +4074,33 @@ def generate_scatter_document(
             continue
         if max(max_x - min_x, max_y - min_y) >= config.tree_clearance_min_horizontal_span_gu:
             large_rock_cliff_rows.append(row)
+    phase_done(
+        "audit.tree_clearance",
+        tree_clearance_audit_started,
+        accepted_trees=len(tree_rows),
+        violations=len(tree_clearance_violations),
+        large_aabbs=len(large_rock_cliff_rows),
+    )
+    tree_profile_counts_started = time.perf_counter()
     tree_profile_candidate_rows_before_clearance = {
-        profile.key: len(_profile_candidate_rows(all_candidates, profile, config))
+        profile.key: len(profile_row_cache.get(profile.key, ()))
         for profile in tree_profiles
     }
     tree_profile_candidate_rows_rejected_by_clearance = {
         profile.key: sum(
             1
-            for candidate, _weight, _mask in _profile_candidate_rows(all_candidates, profile, config)
+            for candidate, _weight, _mask in profile_row_cache.get(profile.key, ())
             if candidate.candidate_id in tree_clearance_blocked_ids
         )
         for profile in tree_profiles
     }
     tree_clearance_rejection_count = sum(tree_profile_candidate_rows_rejected_by_clearance.values())
+    phase_done(
+        "audit.tree_profile_clearance_counts",
+        tree_profile_counts_started,
+        tree_profiles=len(tree_profiles),
+        rejection_count=tree_clearance_rejection_count,
+    )
     tree_clearance_audit = {
         "applies_to": ["flora_role == tree"],
         "rock_cliff_source": "accepted transformed rock/cliff world XY AABBs placed before flora",
@@ -2822,15 +4137,10 @@ def generate_scatter_document(
     accepted_footprint_missing_vtex = sum(
         int(audit.get("missing_vtex_cell_count", 0)) for audit in accepted_footprint_audits
     )
-    accepted_footprint_78_overlap_count = (
-        sum(
-            1
-            for audit in accepted_footprint_audits
-            if 78 in audit.get("road_hit_raw_vtex_values", [])
-        )
-        if 78 in config.road_raw_vtex_values
-        else None
-    )
+    accepted_footprint_road_overlap_count = sum(
+        1 for audit in accepted_footprint_audits
+        if any(value in config.road_raw_vtex_values for value in audit.get("road_hit_raw_vtex_values", []))
+    ) if config.road_raw_vtex_values else None
     road_footprint_output_audit = {
         "applies_to": ["rocks", "cliff"],
         "terrain_source": "tamriel.esm LAND via procgen.espland",
@@ -2857,10 +4167,10 @@ def generate_scatter_document(
         "accepted_refs_with_road_hits": accepted_footprint_road_hits,
         "accepted_refs_missing_land": accepted_footprint_missing_land,
         "accepted_refs_missing_vtex": accepted_footprint_missing_vtex,
-        "accepted_footprints_overlapping_raw_vtex_78": accepted_footprint_78_overlap_count,
-        "zero_accepted_rock_cliff_footprints_overlapping_raw_vtex_78": (
-            accepted_footprint_78_overlap_count == 0
-            if accepted_footprint_78_overlap_count is not None
+        "accepted_footprints_overlapping_configured_road_vtex": accepted_footprint_road_overlap_count,
+        "zero_accepted_rock_cliff_footprints_overlapping_configured_road_vtex": (
+            accepted_footprint_road_overlap_count == 0
+            if accepted_footprint_road_overlap_count is not None
             else None
         ),
         "all_accepted_refs_have_passing_audit": len(accepted_footprint_audits) == len(rock_cliff_rows)
@@ -3003,6 +4313,11 @@ def generate_scatter_document(
         if baseline_actual and float(baseline_actual.get("rock_refs", 0.0))
         else None,
     }
+    phase_done(
+        "post_placement_audits",
+        post_audit_started,
+        placements=len(placements),
+    )
 
     return {
         "schema_version": 6,
@@ -3011,7 +4326,7 @@ def generate_scatter_document(
         "seed": int(config.master_seed),
         "determinism": "derive_seed(master_seed, scatter-falkreath-v3, candidate/profile scope); sorted JSON; no timestamps",
         "scope": {
-            "region": "Falkreath near-water proving block",
+            "region": config.scope_region or "Falkreath near-water proving block",
             "anchor_cell": [-92, -10],
             "bounds_cells": [config.bounds[0], config.bounds[1], config.bounds[2], config.bounds[3]],
             "cell_count": len(target_cells),
@@ -3025,7 +4340,8 @@ def generate_scatter_document(
         },
         "terrain": {
             "source": terrain_source,
-            "reader": "procgen.espland.load_land + height_at_game_position",
+            "edited_land_source": edited_land_source,
+            "reader": "procgen.espland.load_land + procgen.tes3json.land_records_from_json override",
             "composite_heightmap_used": False,
             "water_threshold_thu": 0.0,
             "water_definition": "direct tamriel.esm LAND terrain <= 0 THU",
@@ -3049,7 +4365,7 @@ def generate_scatter_document(
             "road_exclusion": "capture OpenMW-normalized raw VTEX at every candidate center and reject configured road values before profile weighting for flora, rocks, and cliffs",
             "road_footprint_exclusion": "after transformed rock/cliff world-AABB construction, enumerate globally aligned 512-GU LAND tiles with floor-safe CELL/local-tile conversion and half-open maximum edges; reject configured road VTEX and missing LAND/VTEX data fail-closed",
             "upright_rock_gate": "for rocks and cliffs, reject sampled rotations with transformed local-up world Z <= 0 and retry within the existing bounded orientation loop",
-            "quarantine": "remove the five explicit normalized mesh paths before eligibility and quota allocation; no cluster system is added",
+            "quarantine": "remove explicit L_04 cliff shells and four cluster-rock mesh paths before eligibility and quota allocation; L_04 stay banned until pitch/roll or terrain-shape burial seats open bottoms",
             "constrained_tilt": "Sky_TerrRock_LV_04_21.nif and Sky_TerrRock_04_027.nif require transformed local-up tilt <= 15 degrees",
             "tree_clearance": "after rocks/cliffs are accepted, reject tree centers inside large transformed rock/cliff XY AABBs expanded by 128 GU",
             "flora_density_split": "measured tree-share target is unchanged; measured undergrowth-share target is multiplied by 1.25 before deterministic integer per-mesh allocation",
@@ -3058,7 +4374,7 @@ def generate_scatter_document(
             "clearing_mask": "smooth deterministic 4096-GU node interpolation; clearing threshold downweights tree candidates to 0.20, undergrowth candidates remain at 1.0",
             "rock_density": "target total rock density is 70% of the measured wilderness mean; normal rocks also use wider spacing, a smooth 3072-GU patch-gap mask, and reduced flat/low-slope per-cell caps",
             "rock_patch_mask": "smooth deterministic 3072-GU mask; normal rocks require mask >= 0.34, cliffs are exempt so landmarks remain available",
-            "open_faces": "Blender-measured direction-octant sidecar; sample only measured rotations and accept a rock when an open direction aligns with ESM-LAND downslope or an adjacent accepted rock at dot >= configured threshold; target-facing placements also require deeper configured embedding; otherwise skip",
+            "open_faces": "Blender-measured direction-octant sidecar; profiles with open_directions solve yaw toward ESM-LAND downslope or an adjacent rock (pose-first, O(open octants)); closed profiles keep one measured sample; side-open cliffs also require open_side_cliff_min_slope_deg; target-facing placements require deeper configured embedding",
         },
         "water_rules": {
             "threshold_thu": 0.0,
@@ -3090,6 +4406,35 @@ def generate_scatter_document(
             "tree_counts": dict(sorted(tree_by_clear.items())),
             "undergrowth_counts": dict(sorted(undergrowth_by_clear.items())),
             "tree_reduction_observable": tree_by_clear.get("clearing", 0) <= tree_by_clear.get("non_clearing", 0),
+        },
+        "city_clearing": {
+            "enabled": clearing_index is not None,
+            "frame_origin_gu": (
+                [list(o) for o in clearing_index.frame_origins_gu] if hasattr(clearing_index, "frame_origins_gu")
+                else list(clearing_index.frame_origin_gu)
+            ) if clearing_index is not None else None,
+            "flora_clearing_blocked": int(failures.get("clearing_blocked", 0)),
+            "rock_clearing_blocked": int(failures.get("rock_clearing_blocked", 0)),
+            "city_domain_rocks_banned": int(failures.get("city_domain_rocks_banned", 0)),
+            "accepted_rock_cliff_in_city": (
+                sum(
+                    1
+                    for row in placements
+                    if row.get("category") in {"rocks", "cliff"}
+                    and clearing_index is not None
+                    and clearing_index.in_city_domain_point(
+                        float(row["position_gu"][0]), float(row["position_gu"][1])
+                    )
+                )
+                if clearing_index is not None
+                else None
+            ),
+            "rule": (
+                "flora: reject candidate inside building/surface/road via blocks_point; "
+                "rocks/cliff: reject anchor inside city_domain (city_domain_rocks_banned) "
+                "and reject transformed footprint AABB intersecting building/surface/road "
+                "(rock_clearing_blocked); terrain source is the edited-LAND plugin"
+            ),
         },
         "rock_density_cap": {
             **dict(rock_density_caps),
@@ -3138,13 +4483,18 @@ def generate_scatter_document(
             "placed_rock_refs": len(rock_rows),
             "placed_refs_with_profile": sum(1 for row in rock_rows if row.get("open_face", {}).get("profile_status") == "ok"),
             "actions": dict(sorted(open_face_actions.items())),
+            "orientation_sources": dict(sorted(open_face_orientation_sources.items())),
+            "chosen_open_directions": dict(sorted(open_face_chosen_octants.items())),
+            "pose_first_placed_count": open_face_orientation_sources.get("pose_first", 0),
             "safe_target_actions": {
                 "esm_land_downslope": open_face_actions.get("terrain_downslope", 0),
                 "adjacent_accepted_rock": open_face_actions.get("adjacent_rock", 0),
             },
             "no_safe_orientation_count": open_face_no_safe_count,
+            "open_side_cliff_slope_rejects": open_side_cliff_slope_rejects,
+            "open_side_cliff_min_slope_deg": config.open_side_cliff_min_slope_deg,
             "min_embed_gu_for_target_facing_refs": config.open_face_min_embed_gu,
-            "rule": "open side points toward ESM-LAND downslope or an adjacent accepted rock; no safe measured rotation means the candidate is skipped",
+            "rule": "open side uses pose-first yaw toward ESM-LAND downslope or an adjacent accepted rock; closed profiles keep one measured sample; side-open cliffs also require open_side_cliff_min_slope_deg",
         },
         "rock_profiles": {
             "profile_count": len(main_profiles) + len(cliff_profiles),
@@ -3186,12 +4536,14 @@ def generate_scatter_document(
             "measured_giant_ref_total": measured_cliff_total,
             "measured_rock_ref_total": measured_rock_total,
             "slope_min_deg": config.cliff_min_slope_deg,
+            "open_side_cliff_min_slope_deg": config.open_side_cliff_min_slope_deg,
             "water_rule": "per-mesh measured water envelope; no global water-distance cutoff",
             "embedding_depth_gu": _distribution_from_values(cliff_embedding_values),
             "slope_distribution_deg": _distribution_from_values(cliff_slope_values),
             "face_link_count": sum(1 for row in cliffs if row.get("cliff_face_link")),
             "footprint_relief_audit": cliff_footprint_audit,
         },
+        "cliff_seating_audit": cliff_seating_audit,
         "pass_b_scatter": {
             "description": "frequency-quota flora and non-giant rocks using each mesh's measured suitability and transform distributions",
             "placed_refs": sum(1 for row in placements if row["pass"] == "B"),
@@ -3268,7 +4620,6 @@ __all__ = [
     "DEFAULT_CLEARING_THRESHOLD",
     "DEFAULT_JITTER_GU",
     "DEFAULT_MIN_DISTANCES_GU",
-    "DEFAULT_ROAD_RAW_VTEX_VALUES",
     "GENERATION_NAMESPACE",
     "GenerationConfig",
     "LAND_TEXTURE_TILE_SIZE_GU",
@@ -3285,9 +4636,14 @@ __all__ = [
     "cliff_footprint_relief_audit",
     "enumerate_land_texture_tiles",
     "envelope_weight",
+    "envelope_weight_array",
     "generate_scatter_document",
     "large_rock_tree_clearance_violation",
     "road_footprint_audit",
     "transformed_local_up_tilt_degrees",
     "transformed_local_up_world_z",
+    "tree_clearance_blocked_candidate_ids",
+    "_pose_first_open_face_yaw",
+    "_rotate_xy_direction",
 ]
+

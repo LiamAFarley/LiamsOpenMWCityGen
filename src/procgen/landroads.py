@@ -45,6 +45,15 @@ Bounds = tuple[int, int, int, int]
 SiteTile = tuple[int, int]
 
 
+def _raw_vtex_set(raw_vtex: int | Sequence[int]) -> frozenset[int]:
+    """Normalize one or more configured semantic road raw values."""
+
+    values = (int(raw_vtex),) if isinstance(raw_vtex, int) else tuple(int(value) for value in raw_vtex)
+    if not values or any(value <= 0 for value in values):
+        raise ValueError("road raw VTEX assignment must contain positive values")
+    return frozenset(values)
+
+
 def _validated_bounds(bounds: Sequence[int]) -> Bounds:
     if len(bounds) != 4:
         raise ValueError("bounds must be [min_x, max_x, min_y, max_y]")
@@ -92,7 +101,7 @@ def decode_land_road_mask(
     records: Mapping[Grid, LandRecord],
     bounds: Sequence[int],
     *,
-    raw_vtex: int,
+    raw_vtex: int | Sequence[int],
 ) -> np.ndarray:
     """Decode one exact target occupancy mask from normalized LAND VTEX.
 
@@ -102,6 +111,7 @@ def decode_land_road_mask(
     non-road would silently alter topology.
     """
 
+    raw_values = _raw_vtex_set(raw_vtex)
     minimum_x, maximum_x, minimum_y, maximum_y = _validated_bounds(bounds)
     width = (maximum_x - minimum_x + 1) * LAND_TEXTURE_SIDE
     height = (maximum_y - minimum_y + 1) * LAND_TEXTURE_SIDE
@@ -118,7 +128,7 @@ def decode_land_road_mask(
         x0 = (cell_x - minimum_x) * LAND_TEXTURE_SIDE
         y0 = (cell_y - minimum_y) * LAND_TEXTURE_SIDE
         mask[y0 : y0 + LAND_TEXTURE_SIDE, x0 : x0 + LAND_TEXTURE_SIDE] = (
-            values.reshape(LAND_TEXTURE_SIDE, LAND_TEXTURE_SIDE) == int(raw_vtex)
+            np.isin(values.reshape(LAND_TEXTURE_SIDE, LAND_TEXTURE_SIDE), tuple(raw_values))
         ).astype(np.uint8)
     return mask
 
@@ -299,7 +309,7 @@ def derive_boundary_continuations(
     target_mask: np.ndarray,
     bounds: Sequence[int],
     *,
-    raw_vtex: int,
+    raw_vtex: int | Sequence[int],
     frame_origin_gu: Sequence[float],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     """Prove target-edge exits from orthogonally adjacent perimeter VTEX.
@@ -310,6 +320,7 @@ def derive_boundary_continuations(
     not turn those rows into exits.
     """
 
+    raw_values = _raw_vtex_set(raw_vtex)
     normalized_bounds = _validated_bounds(bounds)
     values = np.asarray(target_mask, dtype=bool)
     expected_shape = (
@@ -343,7 +354,7 @@ def derive_boundary_continuations(
             if outside_record is None or outside_record.texture_indices is None:
                 raise ValueError(f"perimeter LAND source is missing VTEX at {outside_grid}")
             outside_value = int(outside_record.texture_index(*outside_tile))
-            if outside_value == int(raw_vtex):
+            if outside_value in raw_values:
                 confirmed_indices.append(along)
             else:
                 side_unconfirmed.append(along)
@@ -353,7 +364,7 @@ def derive_boundary_continuations(
                     cell_tile=target_tile,
                     bounds=normalized_bounds,
                     frame_origin_gu=frame_origin_gu,
-                    raw_vtex=raw_vtex,
+                    raw_vtex=int(records[target_grid].texture_index(*target_tile)),
                 )
                 unconfirmed.append(
                     {
@@ -387,7 +398,7 @@ def derive_boundary_continuations(
                         cell_tile=target_tile,
                         bounds=normalized_bounds,
                         frame_origin_gu=frame_origin_gu,
-                        raw_vtex=raw_vtex,
+                        raw_vtex=int(records[target_grid].texture_index(*target_tile)),
                     )
                 )
                 outside_rows.append(
@@ -397,7 +408,7 @@ def derive_boundary_continuations(
                         cell_tile=outside_tile,
                         bounds=normalized_bounds,
                         frame_origin_gu=frame_origin_gu,
-                        raw_vtex=raw_vtex,
+                        raw_vtex=int(records[outside_grid].texture_index(*outside_tile)),
                     )
                 )
             spans.append(
@@ -430,11 +441,12 @@ def build_land_road_evidence(
     records: Mapping[Grid, LandRecord],
     bounds: Sequence[int],
     *,
-    raw_vtex: int,
+    raw_vtex: int | Sequence[int],
     frame_origin_gu: Sequence[float],
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Build the canonical source-derived road mask and evidence document."""
 
+    raw_values = _raw_vtex_set(raw_vtex)
     normalized_bounds = _validated_bounds(bounds)
     expected_grids = set(source_selection_grids(normalized_bounds))
     missing = sorted(expected_grids - set(records))
@@ -444,7 +456,7 @@ def build_land_road_evidence(
         if records[grid].texture_indices is None:
             raise ValueError(f"LAND road source has no VTEX payload at {grid}")
 
-    target_mask = decode_land_road_mask(records, normalized_bounds, raw_vtex=raw_vtex)
+    target_mask = decode_land_road_mask(records, normalized_bounds, raw_vtex=raw_values)
     components_8 = connected_components(target_mask, connectivity=8)
     components_4 = connected_components(target_mask, connectivity=4)
     component_by_tile: dict[SiteTile, str] = {}
@@ -495,13 +507,14 @@ def build_land_road_evidence(
             cell_x = normalized_bounds[0] + site_x // LAND_TEXTURE_SIDE
             cell_y = normalized_bounds[2] + site_y // LAND_TEXTURE_SIDE
             cell_tile = (site_x % LAND_TEXTURE_SIDE, site_y % LAND_TEXTURE_SIDE)
+            actual_raw = int(records[(cell_x, cell_y)].texture_index(*cell_tile))
             row = _tile_detail(
                 records,
                 grid=(cell_x, cell_y),
                 cell_tile=cell_tile,
                 bounds=normalized_bounds,
                 frame_origin_gu=frame_origin_gu,
-                raw_vtex=raw_vtex,
+                raw_vtex=actual_raw,
                 component_id=component_by_tile[(site_x, site_y)],
             )
             tile_index += 1
@@ -521,7 +534,7 @@ def build_land_road_evidence(
         records,
         target_mask,
         normalized_bounds,
-        raw_vtex=raw_vtex,
+        raw_vtex=raw_values,
         frame_origin_gu=frame_origin_gu,
     )
     mask_bytes = np.ascontiguousarray(target_mask, dtype=np.uint8).tobytes(order="C")
@@ -544,8 +557,8 @@ def build_land_road_evidence(
         "source_record_count": len(expected_grids),
         "source_record_selection": "target 7x7 plus complete one-cell bounding-box ring, including corners",
         "raw_vtex": {
-            "value": int(raw_vtex),
-            "ltex_index": int(raw_vtex) - 1 if int(raw_vtex) > 0 else None,
+            "values": sorted(raw_values),
+            "ltex_indices": sorted(value - 1 for value in raw_values),
             "tile_size_gu": TILE_SIZE_GU,
             "target_mask_shape": [int(target_mask.shape[0]), int(target_mask.shape[1])],
         },

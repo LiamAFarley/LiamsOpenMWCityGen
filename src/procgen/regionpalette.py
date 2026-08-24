@@ -375,6 +375,8 @@ PHASE1_SURFACES: list[dict[str, Any]] = [
 
 def validate_authoring_assignments(
     surfaces: Iterable[Mapping[str, Any]],
+    *,
+    require_road: bool = True,
 ) -> list[dict[str, Any]]:
     """Closed checks over the planned authoring assignment contract.
 
@@ -384,8 +386,9 @@ def validate_authoring_assignments(
     - ``planned_raw_vtex`` values are unique,
     - ``planned_ltex_index == planned_raw_vtex - 1`` for every raw > 0
       (espland convention), and the planned id matches the measured id,
-    - road is exactly raw 78 / index 77 / ``T_Hr_TerrRoadOH_01`` (the
-      protected identity is never reassigned),
+    - every explicitly marked road surface has a valid assignment; its
+      identity is supplied by the active region and is not compared to a
+      global raw/LTEX convention,
     - no planned LTEX index collides with the remap ESP table unless the
       identity at that index is identical,
     - every emitted raw > 0 assignment requires a local LTEX record in the
@@ -428,16 +431,25 @@ def validate_authoring_assignments(
         "passed": unique,
         "detail": f"planned raw values: {sorted(raw for _, raw, _, _ in raws)}",
     })
-    road = next((s for s in surface_list if s.get("surface") == "road"), None)
-    road_raw = road.get("planned_assignment", {}).get("planned_raw_vtex")
-    road_index = road.get("planned_assignment", {}).get("planned_ltex_index")
-    road_id = road.get("planned_assignment", {}).get("planned_ltex_id")
+    roads = [
+        s for s in surface_list
+        if isinstance(s.get("road_class"), str) or s.get("surface") == "road"
+    ]
+    road_assignments_valid = (bool(roads) or not require_road) and all(
+        isinstance(s.get("planned_assignment"), dict)
+        and isinstance(s["planned_assignment"].get("planned_raw_vtex"), int)
+        and isinstance(s["planned_assignment"].get("planned_ltex_index"), int)
+        and s["planned_assignment"]["planned_ltex_index"] == s["planned_assignment"]["planned_raw_vtex"] - 1
+        for s in roads
+    )
     records.append({
-        "id": "authoring.road_protected",
-        "passed": road_raw == 78 and road_index == 77
-                  and road_id == "T_Hr_TerrRoadOH_01",
-        "detail": f"road planned raw/index/id = {road_raw}/{road_index}/{road_id} "
-                  f"(must be 78/77/T_Hr_TerrRoadOH_01)",
+        "id": "authoring.road_assignments_explicit",
+        "passed": road_assignments_valid,
+        "detail": (
+            f"{len(roads)} semantic road assignments carry explicit raw/index identities"
+            if road_assignments_valid else
+            "at least one semantic road surface with a valid explicit assignment is required"
+        ),
     })
     collisions = []
     for _, planned_index, planned_id in [(r[0], r[2], r[3]) for r in raws]:
@@ -834,6 +846,8 @@ def build_region_palette(
     roads: Mapping[str, Any],
     karthgad_core: Mapping[str, Any],
     live_remap: Mapping[str, Any],
+    road_assignments: Mapping[str, Any] | None = None,
+    road_class_by_hierarchy: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble ``region_palette.json``."""
     region = load_region(root)
@@ -1061,6 +1075,8 @@ def build_region_palette(
             ),
             "surfaces": list(PHASE1_SURFACES),
         },
+        "road_assignments": dict(road_assignments or {}),
+        "road_class_by_hierarchy": dict(road_class_by_hierarchy or {}),
         "planned_output_plugin": {
             "plugin_scope": "masterless city output plugin (masters: [])",
             "note": "per ground rule 11, generated plugins declare no "

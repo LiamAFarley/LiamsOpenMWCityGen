@@ -1,0 +1,2727 @@
+{
+  "gate": {
+    "door_model": "sky_ex_cs_re_d_01",
+    "door_offset_local": [
+      538.5,
+      338.9,
+      -474.2
+    ],
+    "frame_model": "sky_ex_cs_re_df_01",
+    "frame_offset_local": [
+      533.7,
+      341.6,
+      -473.2
+    ],
+    "gatehouse_piece": "sky_ex_cs_re_gh_01",
+    "junction_neck_piece_count": 2,
+    "junction_neck_piece_id": "sky_ex_cs_re_wl_01",
+    "junction_tower_piece_id": "sky_ex_cs_re_twr_02",
+    "junction_tower_scale": 0.79,
+    "landing_half_length_along_road_gu": 1024.0,
+    "landing_half_width_across_road_gu": 512.0,
+    "landing_sample_spacing_gu": 128.0,
+    "minimum_passage_threshold_z_gu": 64.0,
+    "passage_alignment_tolerance_gu": 1.0,
+    "passage_burial_gu": 0.0,
+    "passage_center_local_y_gu": 338.9,
+    "tier_count": 1,
+    "tier_rotz_delta_deg": 0.0
+  },
+  "kit_id": "complete_castle_cs_re_system_v1",
+  "pieces": [
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": -0.0,
+      "chain_pitch_gu": 1344.0,
+      "end_a_local": [
+        -54.216,
+        -6.66
+      ],
+      "end_b_local": [
+        53.95,
+        -6.66
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          53.95,
+          -3.643
+        ],
+        "slice_min_xy": [
+          -54.216,
+          -9.676
+        ],
+        "slice_outline_xy": [
+          [
+            -54.216,
+            -6.498
+          ],
+          [
+            29.946,
+            -9.676
+          ],
+          [
+            33.118,
+            -9.676
+          ],
+          [
+            39.523,
+            -9.059
+          ],
+          [
+            53.95,
+            -6.498
+          ],
+          [
+            45.42,
+            -3.643
+          ],
+          [
+            45.42,
+            -3.643
+          ],
+          [
+            -45.686,
+            -3.643
+          ]
+        ],
+        "slice_span_xy": [
+          108.166,
+          6.033
+        ],
+        "slice_vertex_count": 55,
+        "z_band_gu": [
+          10.235,
+          92.113
+        ]
+      },
+      "height_gu": 204.696,
+      "length_gu": 108.166,
+      "long_axis": "x",
+      "model_key": "sky\\d\\sky_ex_cs_re_d_01.nif",
+      "piece_id": "sky_ex_cs_re_d_01",
+      "role": "door",
+      "scale_range": [
+        0.88,
+        0.9993
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 6.033,
+      "tier_height_gu": 0.0,
+      "weight": 80
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 0.09,
+      "chain_pitch_gu": 896.0,
+      "end_a_local": [
+        -47.49,
+        -0.564
+      ],
+      "end_b_local": [
+        45.673,
+        -0.564
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          45.673,
+          45.929
+        ],
+        "slice_min_xy": [
+          -47.49,
+          -47.057
+        ],
+        "slice_outline_xy": [
+          [
+            -47.49,
+            -47.057
+          ],
+          [
+            45.673,
+            -47.057
+          ],
+          [
+            45.673,
+            45.84
+          ],
+          [
+            -47.49,
+            45.929
+          ]
+        ],
+        "slice_span_xy": [
+          93.163,
+          92.986
+        ],
+        "slice_vertex_count": 46,
+        "z_band_gu": [
+          0.545,
+          5.625
+        ]
+      },
+      "height_gu": 12.699,
+      "length_gu": 93.163,
+      "long_axis": "x",
+      "model_key": "sky\\d\\sky_ex_cs_re_td_01.nif",
+      "piece_id": "sky_ex_cs_re_td_01",
+      "role": "door",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 92.986,
+      "tier_height_gu": 0.0,
+      "weight": 6
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 79.484,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -43.291,
+        -4.783
+      ],
+      "end_b_local": [
+        43.291,
+        -4.783
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          43.291,
+          10.797
+        ],
+        "slice_min_xy": [
+          -43.291,
+          -20.363
+        ],
+        "slice_outline_xy": [
+          [
+            -43.291,
+            10.797
+          ],
+          [
+            -29.269,
+            -19.386
+          ],
+          [
+            -6.515,
+            -20.363
+          ],
+          [
+            6.515,
+            -20.363
+          ],
+          [
+            29.269,
+            -19.386
+          ],
+          [
+            43.291,
+            10.797
+          ]
+        ],
+        "slice_span_xy": [
+          86.582,
+          31.159
+        ],
+        "slice_vertex_count": 30,
+        "z_band_gu": [
+          -69.083,
+          14.124
+        ]
+      },
+      "height_gu": 208.019,
+      "length_gu": 86.582,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_asl_01.nif",
+      "piece_id": "sky_ex_cs_re_asl_01",
+      "role": "trim",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 31.159,
+      "tier_height_gu": 0.0,
+      "weight": 1
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": -0.0,
+      "chain_pitch_gu": 1344.0,
+      "end_a_local": [
+        -76.8,
+        2.98
+      ],
+      "end_b_local": [
+        76.8,
+        2.98
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          76.8,
+          18.761
+        ],
+        "slice_min_xy": [
+          -76.8,
+          -12.8
+        ],
+        "slice_outline_xy": [
+          [
+            -76.8,
+            -9.531
+          ],
+          [
+            -73.531,
+            -12.8
+          ],
+          [
+            -54.469,
+            -12.8
+          ],
+          [
+            54.469,
+            -12.8
+          ],
+          [
+            73.531,
+            -12.8
+          ],
+          [
+            76.8,
+            -9.531
+          ],
+          [
+            76.8,
+            18.761
+          ],
+          [
+            -76.8,
+            18.761
+          ]
+        ],
+        "slice_span_xy": [
+          153.6,
+          31.561
+        ],
+        "slice_vertex_count": 108,
+        "z_band_gu": [
+          11.282,
+          101.541
+        ]
+      },
+      "height_gu": 225.647,
+      "length_gu": 153.6,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_df_01.nif",
+      "piece_id": "sky_ex_cs_re_df_01",
+      "role": "doorframe",
+      "scale_range": [
+        0.87,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 31.561,
+      "tier_height_gu": 0.0,
+      "weight": 80
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 738.685,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -1453.267,
+        -4.953
+      ],
+      "end_b_local": [
+        1443.864,
+        -4.953
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          1443.864,
+          465.751
+        ],
+        "slice_min_xy": [
+          -1453.267,
+          -475.657
+        ],
+        "slice_outline_xy": [
+          [
+            -1453.267,
+            465.594
+          ],
+          [
+            -1453.111,
+            -475.657
+          ],
+          [
+            502.612,
+            -475.657
+          ],
+          [
+            1443.864,
+            -475.501
+          ],
+          [
+            1443.708,
+            465.751
+          ],
+          [
+            -512.016,
+            465.751
+          ]
+        ],
+        "slice_span_xy": [
+          2897.131,
+          941.408
+        ],
+        "slice_vertex_count": 1652,
+        "z_band_gu": [
+          -655.397,
+          10.909
+        ]
+      },
+      "height_gu": 1665.765,
+      "length_gu": 2897.131,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_gh_01.nif",
+      "piece_id": "sky_ex_cs_re_gh_01",
+      "role": "gatehouse",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": true,
+      "thickness_gu": 941.408,
+      "tier_height_gu": 1470.8,
+      "weight": 8
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 738.685,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -640.0,
+        0.0
+      ],
+      "end_b_local": [
+        640.0,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          640.0,
+          255.603
+        ],
+        "slice_min_xy": [
+          -640.0,
+          -255.603
+        ],
+        "slice_outline_xy": [
+          [
+            -640.0,
+            -226.0
+          ],
+          [
+            -293.515,
+            -255.598
+          ],
+          [
+            -291.953,
+            -255.599
+          ],
+          [
+            -276.235,
+            -255.599
+          ],
+          [
+            -134.242,
+            -255.603
+          ],
+          [
+            125.855,
+            -255.603
+          ],
+          [
+            267.849,
+            -255.599
+          ],
+          [
+            283.567,
+            -255.599
+          ],
+          [
+            285.129,
+            -255.598
+          ],
+          [
+            640.0,
+            -226.0
+          ],
+          [
+            640.0,
+            226.0
+          ],
+          [
+            285.129,
+            255.598
+          ],
+          [
+            283.567,
+            255.599
+          ],
+          [
+            267.849,
+            255.599
+          ],
+          [
+            125.855,
+            255.603
+          ],
+          [
+            -134.242,
+            255.603
+          ],
+          [
+            -276.235,
+            255.599
+          ],
+          [
+            -291.953,
+            255.599
+          ],
+          [
+            -293.515,
+            255.598
+          ],
+          [
+            -640.0,
+            226.0
+          ]
+        ],
+        "slice_span_xy": [
+          1280.0,
+          511.206
+        ],
+        "slice_vertex_count": 1482,
+        "z_band_gu": [
+          -662.117,
+          -49.573
+        ]
+      },
+      "height_gu": 1531.36,
+      "length_gu": 1280.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_gh_02.nif",
+      "piece_id": "sky_ex_cs_re_gh_02",
+      "role": "gatehouse",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 511.206,
+      "tier_height_gu": 0.0,
+      "weight": 3
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 294.029,
+      "chain_pitch_gu": 477.458,
+      "end_a_local": [-221.458, 0.0],
+      "end_b_local": [256.0, 0.0],
+      "footprint_slice": {
+        "slice_max_xy": [256.0, 295.148],
+        "slice_min_xy": [-250.333, -295.148],
+        "slice_outline_xy": [
+          [-250.333, -245.311],
+          [-250.177, -286.482],
+          [-247.381, -290.906],
+          [169.605, -295.148],
+          [256.0, -295.148],
+          [256.0, 295.148],
+          [169.605, 295.148],
+          [-247.381, 290.906],
+          [-250.177, 286.482],
+          [-250.333, 245.311]
+        ],
+        "slice_span_xy": [506.333, 590.295],
+        "slice_vertex_count": 250,
+        "z_band_gu": [-294.029, 481.901]
+      },
+      "height_gu": 775.93,
+      "length_gu": 477.458,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_bre_02.nif",
+      "piece_id": "sky_ex_cs_re_bre_02",
+      "role": "slope",
+      "rise_axis": "x+",
+      "scale_range": [0.6626506024096385, 0.6626506024096385],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 590.295,
+      "tier_height_gu": 0.0,
+      "walk_surface": {
+        "entry_local_gu": [-221.458, 0.0, 135.274],
+        "exit_local_gu": [256.0, 0.0, 274.5],
+        "lateral_bounds_gu": [-265.6, 265.6],
+        "measurement": "evaluated coplanar slope with horizontal end landings",
+        "rise_gu": 139.226
+      },
+      "weight": 0
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.2,
+      "chain_pitch_gu": 1664.0,
+      "end_a_local": [
+        -501.12,
+        0.766
+      ],
+      "end_b_local": [
+        -190.08,
+        0.766
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          -190.08,
+          65.635
+        ],
+        "slice_min_xy": [
+          -501.12,
+          -64.102
+        ],
+        "slice_outline_xy": [
+          [
+            -501.12,
+            -63.636
+          ],
+          [
+            -500.654,
+            -64.102
+          ],
+          [
+            -190.546,
+            -64.102
+          ],
+          [
+            -190.08,
+            -63.636
+          ],
+          [
+            -190.08,
+            65.169
+          ],
+          [
+            -190.546,
+            65.635
+          ],
+          [
+            -270.254,
+            65.635
+          ],
+          [
+            -500.654,
+            65.635
+          ],
+          [
+            -501.12,
+            65.169
+          ]
+        ],
+        "slice_span_xy": [
+          311.04,
+          129.737
+        ],
+        "slice_vertex_count": 384,
+        "z_band_gu": [
+          -460.8,
+          -153.6
+        ]
+      },
+      "height_gu": 768.0,
+      "length_gu": 311.04,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_st_01.nif",
+      "piece_id": "sky_ex_cs_re_st_01",
+      "role": "stair",
+      "rise_axis": "x+",
+      "rise_axis_evidence": "output/cityforge/wallkit/falkreath_stair_geometry_audit.json",
+      "walk_surface": {
+        "entry_local_gu": [-526.254, 0.766, -473.6],
+        "exit_local_gu": [350.332, 0.766, 268.8],
+        "lateral_bounds_gu": [-63.636, 65.169],
+        "measurement": "evaluated upward-facing tread surfaces",
+        "rise_gu": 742.4
+      },
+      "scale_range": [
+        1.0,
+        1.72
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 129.737,
+      "tier_height_gu": 0.0,
+      "weight": 13
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1475.171,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -0.093,
+        -599.464
+      ],
+      "end_b_local": [
+        -0.093,
+        600.008
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          599.464,
+          600.008
+        ],
+        "slice_min_xy": [
+          -599.649,
+          -599.464
+        ],
+        "slice_outline_xy": [
+          [
+            -599.649,
+            599.681
+          ],
+          [
+            -599.322,
+            -599.464
+          ],
+          [
+            -599.109,
+            -599.464
+          ],
+          [
+            599.464,
+            -598.963
+          ],
+          [
+            599.464,
+            -598.963
+          ],
+          [
+            599.322,
+            600.008
+          ]
+        ],
+        "slice_span_xy": [
+          1199.113,
+          1199.472
+        ],
+        "slice_vertex_count": 96,
+        "z_band_gu": [
+          -1321.963,
+          -96.301
+        ]
+      },
+      "height_gu": 3064.155,
+      "length_gu": 1199.472,
+      "long_axis": "y",
+      "model_key": "sky\\x\\sky_ex_cs_re_tw_01.nif",
+      "piece_id": "sky_ex_cs_re_tw_01",
+      "role": "tower",
+      "scale_range": [
+        0.81,
+        2.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 1199.113,
+      "tier_height_gu": 0.0,
+      "weight": 5
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 779.953,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -599.464,
+        0.0
+      ],
+      "end_b_local": [
+        599.464,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          599.464,
+          599.464
+        ],
+        "slice_min_xy": [
+          -599.464,
+          -599.464
+        ],
+        "slice_outline_xy": [
+          [
+            -599.464,
+            598.963
+          ],
+          [
+            -598.994,
+            -599.464
+          ],
+          [
+            -598.963,
+            -599.464
+          ],
+          [
+            599.464,
+            -598.963
+          ],
+          [
+            599.464,
+            599.464
+          ],
+          [
+            -599.464,
+            598.994
+          ]
+        ],
+        "slice_span_xy": [
+          1198.928,
+          1198.928
+        ],
+        "slice_vertex_count": 96,
+        "z_band_gu": [
+          -712.022,
+          -168.578
+        ]
+      },
+      "height_gu": 1358.611,
+      "length_gu": 1198.928,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_tw_03.nif",
+      "piece_id": "sky_ex_cs_re_tw_03",
+      "role": "tower",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 1198.928,
+      "tier_height_gu": 0.0,
+      "weight": 1
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1497.751,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -468.52,
+        -4.953
+      ],
+      "end_b_local": [
+        473.618,
+        -4.953
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          473.618,
+          466.116
+        ],
+        "slice_min_xy": [
+          -468.52,
+          -476.022
+        ],
+        "slice_outline_xy": [
+          [
+            -468.52,
+            465.789
+          ],
+          [
+            -468.193,
+            -476.022
+          ],
+          [
+            473.618,
+            -475.695
+          ],
+          [
+            473.291,
+            466.116
+          ]
+        ],
+        "slice_span_xy": [
+          942.138,
+          942.138
+        ],
+        "slice_vertex_count": 72,
+        "z_band_gu": [
+          -1344.544,
+          -118.882
+        ]
+      },
+      "height_gu": 3064.155,
+      "length_gu": 942.138,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_tw_04.nif",
+      "piece_id": "sky_ex_cs_re_tw_04",
+      "role": "tower",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 942.138,
+      "tier_height_gu": 0.0,
+      "weight": 5
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1477.38,
+      "chain_pitch_gu": 1216.0,
+      "end_a_local": [
+        -599.464,
+        0.0
+      ],
+      "end_b_local": [
+        599.464,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          599.464,
+          599.464
+        ],
+        "slice_min_xy": [
+          -599.464,
+          -599.464
+        ],
+        "slice_outline_xy": [
+          [
+            -599.464,
+            599.405
+          ],
+          [
+            -599.405,
+            -599.464
+          ],
+          [
+            599.464,
+            -598.963
+          ],
+          [
+            599.405,
+            599.464
+          ]
+        ],
+        "slice_span_xy": [
+          1198.928,
+          1198.928
+        ],
+        "slice_vertex_count": 64,
+        "z_band_gu": [
+          -1326.738,
+          -121.6
+        ]
+      },
+      "height_gu": 3012.846,
+      "length_gu": 1198.928,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_tw_07.nif",
+      "piece_id": "sky_ex_cs_re_tw_07",
+      "role": "tower",
+      "scale_range": [
+        0.77,
+        1.73
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 1198.928,
+      "tier_height_gu": 0.0,
+      "weight": 2
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1470.547,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -603.309,
+        0.0
+      ],
+      "end_b_local": [
+        603.309,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          603.309,
+          603.309
+        ],
+        "slice_min_xy": [
+          -603.309,
+          -603.309
+        ],
+        "slice_outline_xy": [
+          [
+            -603.309,
+            -0.002
+          ],
+          [
+            -591.717,
+            -117.701
+          ],
+          [
+            -591.717,
+            -117.701
+          ],
+          [
+            -557.385,
+            -230.877
+          ],
+          [
+            -557.385,
+            -230.878
+          ],
+          [
+            -501.633,
+            -335.181
+          ],
+          [
+            -426.604,
+            -426.605
+          ],
+          [
+            -426.604,
+            -426.605
+          ],
+          [
+            -335.18,
+            -501.634
+          ],
+          [
+            -335.18,
+            -501.634
+          ],
+          [
+            -230.876,
+            -557.386
+          ],
+          [
+            -117.699,
+            -591.717
+          ],
+          [
+            0.0,
+            -603.309
+          ],
+          [
+            0.0,
+            -603.309
+          ],
+          [
+            117.7,
+            -591.717
+          ],
+          [
+            230.877,
+            -557.385
+          ],
+          [
+            335.181,
+            -501.634
+          ],
+          [
+            426.604,
+            -426.604
+          ],
+          [
+            426.604,
+            -426.604
+          ],
+          [
+            501.633,
+            -335.181
+          ],
+          [
+            501.633,
+            -335.181
+          ],
+          [
+            557.385,
+            -230.877
+          ],
+          [
+            591.717,
+            -117.7
+          ],
+          [
+            603.309,
+            -0.001
+          ],
+          [
+            603.309,
+            -0.001
+          ],
+          [
+            591.717,
+            117.699
+          ],
+          [
+            591.717,
+            117.699
+          ],
+          [
+            557.386,
+            230.876
+          ],
+          [
+            557.385,
+            230.876
+          ],
+          [
+            501.634,
+            335.18
+          ],
+          [
+            426.605,
+            426.604
+          ],
+          [
+            335.179,
+            501.635
+          ],
+          [
+            335.178,
+            501.635
+          ],
+          [
+            230.875,
+            557.386
+          ],
+          [
+            230.873,
+            557.387
+          ],
+          [
+            117.698,
+            591.717
+          ],
+          [
+            117.697,
+            591.718
+          ],
+          [
+            -0.002,
+            603.309
+          ],
+          [
+            -0.003,
+            603.309
+          ],
+          [
+            -117.701,
+            591.717
+          ],
+          [
+            -117.703,
+            591.716
+          ],
+          [
+            -230.878,
+            557.385
+          ],
+          [
+            -230.879,
+            557.384
+          ],
+          [
+            -335.182,
+            501.633
+          ],
+          [
+            -335.183,
+            501.632
+          ],
+          [
+            -426.605,
+            426.603
+          ],
+          [
+            -426.606,
+            426.603
+          ],
+          [
+            -501.634,
+            335.18
+          ],
+          [
+            -501.635,
+            335.179
+          ],
+          [
+            -557.386,
+            230.875
+          ],
+          [
+            -591.717,
+            117.699
+          ],
+          [
+            -591.717,
+            117.698
+          ],
+          [
+            -603.309,
+            -0.001
+          ]
+        ],
+        "slice_span_xy": [
+          1206.619,
+          1206.619
+        ],
+        "slice_vertex_count": 64,
+        "z_band_gu": [
+          -1368.0,
+          -547.622
+        ]
+      },
+      "height_gu": 2050.945,
+      "length_gu": 1206.619,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_twr_02.nif",
+      "piece_id": "sky_ex_cs_re_twr_02",
+      "role": "tower",
+      "scale_range": [
+        0.79,
+        0.97
+      ],
+      "square": true,
+      "stackable": true,
+      "thickness_gu": 1206.619,
+      "tier_height_gu": 2322.0,
+      "weight": 3
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1470.547,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -305.136,
+        0.0
+      ],
+      "end_b_local": [
+        305.136,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          305.136,
+          305.136
+        ],
+        "slice_min_xy": [
+          -305.136,
+          -305.136
+        ],
+        "slice_outline_xy": [
+          [
+            -305.136,
+            0.0
+          ],
+          [
+            -281.909,
+            -116.77
+          ],
+          [
+            -281.909,
+            -116.77
+          ],
+          [
+            -215.764,
+            -215.763
+          ],
+          [
+            -215.764,
+            -215.764
+          ],
+          [
+            -116.771,
+            -281.909
+          ],
+          [
+            -0.0,
+            -305.136
+          ],
+          [
+            -0.0,
+            -305.136
+          ],
+          [
+            116.77,
+            -281.909
+          ],
+          [
+            215.763,
+            -215.764
+          ],
+          [
+            281.909,
+            -116.771
+          ],
+          [
+            305.136,
+            -0.0
+          ],
+          [
+            305.136,
+            -0.0
+          ],
+          [
+            281.909,
+            116.77
+          ],
+          [
+            215.764,
+            215.764
+          ],
+          [
+            116.771,
+            281.909
+          ],
+          [
+            0.001,
+            305.136
+          ],
+          [
+            0.001,
+            305.136
+          ],
+          [
+            -116.77,
+            281.909
+          ],
+          [
+            -215.763,
+            215.764
+          ],
+          [
+            -281.909,
+            116.771
+          ],
+          [
+            -281.909,
+            116.771
+          ],
+          [
+            -305.136,
+            0.001
+          ]
+        ],
+        "slice_span_xy": [
+          610.272,
+          610.272
+        ],
+        "slice_vertex_count": 48,
+        "z_band_gu": [
+          -1317.413,
+          -92.336
+        ]
+      },
+      "height_gu": 3062.691,
+      "length_gu": 610.272,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_twr_03.nif",
+      "piece_id": "sky_ex_cs_re_twr_03",
+      "role": "tower",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 610.272,
+      "tier_height_gu": 0.0,
+      "weight": 1
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1470.547,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -305.136,
+        0.0
+      ],
+      "end_b_local": [
+        305.136,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          305.136,
+          305.136
+        ],
+        "slice_min_xy": [
+          -305.136,
+          -305.136
+        ],
+        "slice_outline_xy": [
+          [
+            -305.136,
+            0.0
+          ],
+          [
+            -281.909,
+            -116.77
+          ],
+          [
+            -215.764,
+            -215.764
+          ],
+          [
+            -116.771,
+            -281.909
+          ],
+          [
+            -0.001,
+            -305.136
+          ],
+          [
+            116.77,
+            -281.909
+          ],
+          [
+            215.763,
+            -215.764
+          ],
+          [
+            281.909,
+            -116.771
+          ],
+          [
+            305.136,
+            -0.0
+          ],
+          [
+            281.909,
+            116.77
+          ],
+          [
+            215.764,
+            215.764
+          ],
+          [
+            116.771,
+            281.909
+          ],
+          [
+            0.001,
+            305.136
+          ],
+          [
+            -116.77,
+            281.909
+          ],
+          [
+            -215.763,
+            215.764
+          ],
+          [
+            -281.909,
+            116.771
+          ]
+        ],
+        "slice_span_xy": [
+          610.272,
+          610.272
+        ],
+        "slice_vertex_count": 32,
+        "z_band_gu": [
+          -1368.001,
+          -547.634
+        ]
+      },
+      "height_gu": 2050.919,
+      "length_gu": 610.272,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_twr_04.nif",
+      "piece_id": "sky_ex_cs_re_twr_04",
+      "role": "tower",
+      "scale_range": [
+        1.16,
+        1.16
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 610.272,
+      "tier_height_gu": 0.0,
+      "weight": 1
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1470.547,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        0.0,
+        -603.309
+      ],
+      "end_b_local": [
+        0.0,
+        603.309
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          603.309,
+          603.309
+        ],
+        "slice_min_xy": [
+          -603.309,
+          -603.309
+        ],
+        "slice_outline_xy": [
+          [
+            -603.309,
+            -0.002
+          ],
+          [
+            -591.717,
+            -117.701
+          ],
+          [
+            -591.717,
+            -117.701
+          ],
+          [
+            -591.716,
+            -117.702
+          ],
+          [
+            -557.385,
+            -230.877
+          ],
+          [
+            -557.385,
+            -230.878
+          ],
+          [
+            -557.384,
+            -230.878
+          ],
+          [
+            -501.633,
+            -335.181
+          ],
+          [
+            -501.632,
+            -335.182
+          ],
+          [
+            -426.604,
+            -426.605
+          ],
+          [
+            -426.604,
+            -426.605
+          ],
+          [
+            -426.603,
+            -426.605
+          ],
+          [
+            -335.18,
+            -501.634
+          ],
+          [
+            -335.18,
+            -501.634
+          ],
+          [
+            -230.876,
+            -557.386
+          ],
+          [
+            -230.876,
+            -557.386
+          ],
+          [
+            -117.699,
+            -591.717
+          ],
+          [
+            0.0,
+            -603.309
+          ],
+          [
+            0.001,
+            -603.309
+          ],
+          [
+            117.7,
+            -591.717
+          ],
+          [
+            230.877,
+            -557.385
+          ],
+          [
+            335.181,
+            -501.634
+          ],
+          [
+            426.604,
+            -426.604
+          ],
+          [
+            426.604,
+            -426.604
+          ],
+          [
+            501.633,
+            -335.181
+          ],
+          [
+            557.385,
+            -230.877
+          ],
+          [
+            557.385,
+            -230.877
+          ],
+          [
+            591.717,
+            -117.7
+          ],
+          [
+            603.309,
+            -0.001
+          ],
+          [
+            603.309,
+            -0.001
+          ],
+          [
+            591.717,
+            117.699
+          ],
+          [
+            591.717,
+            117.699
+          ],
+          [
+            557.386,
+            230.876
+          ],
+          [
+            501.634,
+            335.18
+          ],
+          [
+            501.634,
+            335.18
+          ],
+          [
+            426.605,
+            426.604
+          ],
+          [
+            335.179,
+            501.635
+          ],
+          [
+            335.178,
+            501.635
+          ],
+          [
+            335.176,
+            501.636
+          ],
+          [
+            230.875,
+            557.386
+          ],
+          [
+            230.873,
+            557.387
+          ],
+          [
+            230.872,
+            557.387
+          ],
+          [
+            117.698,
+            591.717
+          ],
+          [
+            117.697,
+            591.718
+          ],
+          [
+            117.695,
+            591.718
+          ],
+          [
+            -0.002,
+            603.309
+          ],
+          [
+            -0.004,
+            603.309
+          ],
+          [
+            -117.701,
+            591.717
+          ],
+          [
+            -117.704,
+            591.716
+          ],
+          [
+            -230.878,
+            557.385
+          ],
+          [
+            -230.88,
+            557.384
+          ],
+          [
+            -335.182,
+            501.633
+          ],
+          [
+            -335.183,
+            501.632
+          ],
+          [
+            -335.184,
+            501.631
+          ],
+          [
+            -426.605,
+            426.603
+          ],
+          [
+            -426.607,
+            426.602
+          ],
+          [
+            -501.634,
+            335.18
+          ],
+          [
+            -501.635,
+            335.178
+          ],
+          [
+            -557.386,
+            230.875
+          ],
+          [
+            -557.386,
+            230.874
+          ],
+          [
+            -591.717,
+            117.699
+          ],
+          [
+            -591.717,
+            117.698
+          ],
+          [
+            -603.309,
+            -0.001
+          ]
+        ],
+        "slice_span_xy": [
+          1206.619,
+          1206.619
+        ],
+        "slice_vertex_count": 96,
+        "z_band_gu": [
+          -1306.301,
+          7.667
+        ]
+      },
+      "height_gu": 3284.92,
+      "length_gu": 1206.619,
+      "long_axis": "y",
+      "model_key": "sky\\x\\sky_ex_cs_re_twr_05.nif",
+      "piece_id": "sky_ex_cs_re_twr_05",
+      "role": "tower",
+      "scale_range": [
+        0.9,
+        0.9
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 1206.619,
+      "tier_height_gu": 0.0,
+      "weight": 6
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 1470.547,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -305.136,
+        0.0
+      ],
+      "end_b_local": [
+        305.136,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          305.136,
+          305.136
+        ],
+        "slice_min_xy": [
+          -305.136,
+          -305.136
+        ],
+        "slice_outline_xy": [
+          [
+            -305.136,
+            0.0
+          ],
+          [
+            -281.909,
+            -116.77
+          ],
+          [
+            -281.909,
+            -116.77
+          ],
+          [
+            -215.764,
+            -215.763
+          ],
+          [
+            -215.764,
+            -215.764
+          ],
+          [
+            -116.771,
+            -281.909
+          ],
+          [
+            -0.001,
+            -305.136
+          ],
+          [
+            -0.001,
+            -305.136
+          ],
+          [
+            116.77,
+            -281.909
+          ],
+          [
+            215.763,
+            -215.764
+          ],
+          [
+            281.909,
+            -116.771
+          ],
+          [
+            281.909,
+            -116.771
+          ],
+          [
+            305.136,
+            -0.0
+          ],
+          [
+            281.909,
+            116.77
+          ],
+          [
+            281.909,
+            116.77
+          ],
+          [
+            215.764,
+            215.764
+          ],
+          [
+            116.771,
+            281.908
+          ],
+          [
+            116.771,
+            281.909
+          ],
+          [
+            0.001,
+            305.136
+          ],
+          [
+            0.001,
+            305.136
+          ],
+          [
+            -116.77,
+            281.909
+          ],
+          [
+            -116.77,
+            281.909
+          ],
+          [
+            -215.763,
+            215.764
+          ],
+          [
+            -281.909,
+            116.771
+          ],
+          [
+            -281.909,
+            116.771
+          ],
+          [
+            -305.136,
+            0.001
+          ]
+        ],
+        "slice_span_xy": [
+          610.272,
+          610.272
+        ],
+        "slice_vertex_count": 48,
+        "z_band_gu": [
+          -1320.587,
+          -120.906
+        ]
+      },
+      "height_gu": 2999.201,
+      "length_gu": 610.272,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_twr_06.nif",
+      "piece_id": "sky_ex_cs_re_twr_06",
+      "role": "tower",
+      "scale_range": [
+        1.0,
+        1.18
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 610.272,
+      "tier_height_gu": 0.0,
+      "weight": 12
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": 3776.0,
+      "end_a_local": [
+        3.5,
+        -384.0
+      ],
+      "end_b_local": [
+        3.5,
+        121.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          256.0,
+          121.0
+        ],
+        "slice_min_xy": [
+          -249.0,
+          -384.0
+        ],
+        "slice_outline_xy": [
+          [
+            -249.0,
+            -384.0
+          ],
+          [
+            -16.363,
+            -384.0
+          ],
+          [
+            256.0,
+            -111.637
+          ],
+          [
+            256.0,
+            121.0
+          ],
+          [
+            -249.0,
+            121.0
+          ]
+        ],
+        "slice_span_xy": [
+          505.0,
+          505.0
+        ],
+        "slice_vertex_count": 36,
+        "z_band_gu": [
+          -450.515,
+          -57.919
+        ]
+      },
+      "height_gu": 981.491,
+      "length_gu": 505.0,
+      "long_axis": "y",
+      "model_key": "sky\\x\\sky_ex_cs_re_wc_01.nif",
+      "piece_id": "sky_ex_cs_re_wc_01",
+      "role": "corner",
+      "scale_range": [
+        0.5,
+        1.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 505.0,
+      "tier_height_gu": 0.0,
+      "weight": 17
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 59.709,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -55.348,
+        0.057
+      ],
+      "end_b_local": [
+        55.348,
+        0.057
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          55.348,
+          13.085
+        ],
+        "slice_min_xy": [
+          -55.348,
+          -12.972
+        ],
+        "slice_outline_xy": [
+          [
+            -55.348,
+            -9.644
+          ],
+          [
+            -52.021,
+            -12.971
+          ],
+          [
+            -32.618,
+            -12.972
+          ],
+          [
+            32.618,
+            -12.972
+          ],
+          [
+            52.021,
+            -12.971
+          ],
+          [
+            55.348,
+            -9.644
+          ],
+          [
+            55.348,
+            13.085
+          ],
+          [
+            -55.348,
+            13.085
+          ]
+        ],
+        "slice_span_xy": [
+          110.695,
+          26.056
+        ],
+        "slice_vertex_count": 130,
+        "z_band_gu": [
+          -53.497,
+          -3.796
+        ]
+      },
+      "height_gu": 124.252,
+      "length_gu": 110.695,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_win_01.nif",
+      "piece_id": "sky_ex_cs_re_win_01",
+      "role": "trim",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 26.056,
+      "tier_height_gu": 0.0,
+      "weight": 2
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": 512.0,
+      "end_a_local": [
+        -256.0,
+        4.681
+      ],
+      "end_b_local": [
+        256.0,
+        4.681
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          256.0,
+          121.0
+        ],
+        "slice_min_xy": [
+          -256.0,
+          -111.637
+        ],
+        "slice_outline_xy": [
+          [
+            -256.0,
+            -111.637
+          ],
+          [
+            0.0,
+            -111.637
+          ],
+          [
+            256.0,
+            -111.637
+          ],
+          [
+            256.0,
+            121.0
+          ],
+          [
+            -256.0,
+            121.0
+          ]
+        ],
+        "slice_span_xy": [
+          512.0,
+          232.637
+        ],
+        "slice_vertex_count": 24,
+        "z_band_gu": [
+          -450.515,
+          -57.919
+        ]
+      },
+      "height_gu": 981.491,
+      "length_gu": 512.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_01.nif",
+      "piece_id": "sky_ex_cs_re_wl_01",
+      "role": "straight",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 232.637,
+      "tier_height_gu": 0.0,
+      "walk_surface": {
+        "end_a_local_gu": [-256.0, -15.319, 274.5],
+        "end_b_local_gu": [256.0, -15.319, 274.5],
+        "lateral_bounds_gu": [-101.637, 71.0],
+        "measurement": "largest evaluated upward-facing surface cluster",
+        "surface_z_gu": 274.5
+      },
+      "weight": 35
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 500.813,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -896.0,
+        -4.953
+      ],
+      "end_b_local": [
+        896.0,
+        -4.953
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          896.0,
+          465.751
+        ],
+        "slice_min_xy": [
+          -896.0,
+          -475.657
+        ],
+        "slice_outline_xy": [
+          [
+            -896.0,
+            -111.637
+          ],
+          [
+            -467.905,
+            -475.657
+          ],
+          [
+            473.253,
+            -475.407
+          ],
+          [
+            896.0,
+            -111.637
+          ],
+          [
+            896.0,
+            121.0
+          ],
+          [
+            473.003,
+            465.751
+          ],
+          [
+            -468.155,
+            465.5
+          ],
+          [
+            -896.0,
+            121.0
+          ]
+        ],
+        "slice_span_xy": [
+          1792.0,
+          941.408
+        ],
+        "slice_vertex_count": 84,
+        "z_band_gu": [
+          -451.665,
+          -58.483
+        ]
+      },
+      "height_gu": 982.955,
+      "length_gu": 1792.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_02.nif",
+      "piece_id": "sky_ex_cs_re_wl_02",
+      "role": "straight",
+      "scale_range": [
+        0.97,
+        0.97
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 941.408,
+      "tier_height_gu": 0.0,
+      "weight": 1
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -256.0,
+        -3.169
+      ],
+      "end_b_local": [
+        256.0,
+        -3.169
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          256.0,
+          238.489
+        ],
+        "slice_min_xy": [
+          -256.0,
+          -244.826
+        ],
+        "slice_outline_xy": [
+          [
+            -256.0,
+            -201.306
+          ],
+          [
+            -206.393,
+            -244.825
+          ],
+          [
+            -205.302,
+            -244.826
+          ],
+          [
+            -194.325,
+            -244.826
+          ],
+          [
+            185.648,
+            -244.826
+          ],
+          [
+            196.626,
+            -244.826
+          ],
+          [
+            197.717,
+            -244.825
+          ],
+          [
+            256.0,
+            -201.306
+          ],
+          [
+            256.0,
+            201.306
+          ],
+          [
+            197.717,
+            238.488
+          ],
+          [
+            196.626,
+            238.488
+          ],
+          [
+            185.648,
+            238.489
+          ],
+          [
+            -194.325,
+            238.489
+          ],
+          [
+            -205.302,
+            238.488
+          ],
+          [
+            -206.393,
+            238.488
+          ],
+          [
+            -256.0,
+            201.306
+          ]
+        ],
+        "slice_span_xy": [
+          512.0,
+          483.315
+        ],
+        "slice_vertex_count": 1092,
+        "z_band_gu": [
+          -450.515,
+          -57.919
+        ]
+      },
+      "height_gu": 981.491,
+      "length_gu": 512.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_03.nif",
+      "piece_id": "sky_ex_cs_re_wl_03",
+      "role": "straight",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 483.315,
+      "tier_height_gu": 0.0,
+      "weight": 1
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": 512.0,
+      "end_a_local": [
+        -256.0,
+        0.0
+      ],
+      "end_b_local": [
+        256.0,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          256.0,
+          201.306
+        ],
+        "slice_min_xy": [
+          -256.0,
+          -201.306
+        ],
+        "slice_outline_xy": [
+          [
+            -256.0,
+            -201.306
+          ],
+          [
+            256.0,
+            -201.306
+          ],
+          [
+            256.0,
+            201.306
+          ],
+          [
+            -256.0,
+            201.306
+          ]
+        ],
+        "slice_span_xy": [
+          512.0,
+          402.613
+        ],
+        "slice_vertex_count": 28,
+        "z_band_gu": [
+          -450.515,
+          -57.919
+        ]
+      },
+      "height_gu": 981.491,
+      "length_gu": 512.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_04.nif",
+      "piece_id": "sky_ex_cs_re_wl_04",
+      "role": "straight",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": true,
+      "thickness_gu": 402.613,
+      "tier_height_gu": 996.7,
+      "walk_surface": {
+        "end_a_local_gu": [-256.0, 0.0, 274.5],
+        "end_b_local_gu": [256.0, 0.0, 274.5],
+        "lateral_bounds_gu": [-176.0, 176.0],
+        "measurement": "largest evaluated upward-facing surface cluster",
+        "surface_z_gu": 274.5
+      },
+      "weight": 105
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        -512.0,
+        4.681
+      ],
+      "end_b_local": [
+        512.0,
+        4.681
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          512.0,
+          121.0
+        ],
+        "slice_min_xy": [
+          -512.0,
+          -111.637
+        ],
+        "slice_outline_xy": [
+          [
+            -512.0,
+            121.0
+          ],
+          [
+            -511.999,
+            -111.637
+          ],
+          [
+            512.0,
+            -111.637
+          ],
+          [
+            512.0,
+            121.0
+          ]
+        ],
+        "slice_span_xy": [
+          1024.0,
+          232.637
+        ],
+        "slice_vertex_count": 44,
+        "z_band_gu": [
+          -431.315,
+          114.881
+        ]
+      },
+      "height_gu": 1365.49,
+      "length_gu": 1024.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_05.nif",
+      "piece_id": "sky_ex_cs_re_wl_05",
+      "role": "slope",
+      "rise_axis": "x-",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 232.637,
+      "tier_height_gu": 0.0,
+      "walk_surface": {
+        "entry_local_gu": [512.0, -15.319, 274.5],
+        "exit_local_gu": [-512.0, -15.319, 658.5],
+        "lateral_bounds_gu": [-101.637, 71.0],
+        "measurement": "lowest and highest evaluated horizontal terminal landings",
+        "rise_gu": 384.0
+      },
+      "weight": 2
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": 1024.0,
+      "end_a_local": [
+        -512.0,
+        4.681
+      ],
+      "end_b_local": [
+        512.0,
+        4.681
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          512.0,
+          121.0
+        ],
+        "slice_min_xy": [
+          -512.0,
+          -111.637
+        ],
+        "slice_outline_xy": [
+          [
+            -512.0,
+            -111.637
+          ],
+          [
+            511.999,
+            -111.637
+          ],
+          [
+            512.0,
+            121.0
+          ],
+          [
+            -512.0,
+            121.0
+          ]
+        ],
+        "slice_span_xy": [
+          1024.0,
+          232.637
+        ],
+        "slice_vertex_count": 44,
+        "z_band_gu": [
+          -431.315,
+          114.881
+        ]
+      },
+      "height_gu": 1365.49,
+      "length_gu": 1024.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_06.nif",
+      "piece_id": "sky_ex_cs_re_wl_06",
+      "role": "slope",
+      "rise_axis": "x+",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": false,
+      "thickness_gu": 232.637,
+      "tier_height_gu": 0.0,
+      "walk_surface": {
+        "entry_local_gu": [-512.0, -15.319, 274.5],
+        "exit_local_gu": [512.0, -15.319, 658.5],
+        "lateral_bounds_gu": [-101.637, 71.0],
+        "measurement": "lowest and highest evaluated horizontal terminal landings",
+        "rise_gu": 384.0
+      },
+      "weight": 3
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 499.59,
+      "chain_pitch_gu": 1536.0,
+      "end_a_local": [
+        -512.0,
+        0.0
+      ],
+      "end_b_local": [
+        512.0,
+        0.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [
+          512.0,
+          201.306
+        ],
+        "slice_min_xy": [
+          -512.0,
+          -201.306
+        ],
+        "slice_outline_xy": [
+          [
+            -512.0,
+            -201.306
+          ],
+          [
+            88.288,
+            -201.306
+          ],
+          [
+            168.62,
+            -201.306
+          ],
+          [
+            512.0,
+            -201.306
+          ],
+          [
+            512.0,
+            201.306
+          ],
+          [
+            168.62,
+            201.306
+          ],
+          [
+            88.288,
+            201.306
+          ],
+          [
+            -512.0,
+            201.306
+          ]
+        ],
+        "slice_span_xy": [
+          1024.0,
+          402.613
+        ],
+        "slice_vertex_count": 44,
+        "z_band_gu": [
+          -431.315,
+          114.881
+        ]
+      },
+      "height_gu": 1365.49,
+      "length_gu": 1024.0,
+      "long_axis": "x",
+      "model_key": "sky\\x\\sky_ex_cs_re_wl_07.nif",
+      "piece_id": "sky_ex_cs_re_wl_07",
+      "role": "straight",
+      "scale_range": [
+        1.0,
+        1.0
+      ],
+      "square": false,
+      "stackable": true,
+      "thickness_gu": 402.613,
+      "tier_height_gu": 607.1,
+      "weight": 20
+    },
+    {
+      "allow_scaled_fill": false,
+      "base_offset_gu": 384.0,
+      "chain_pitch_gu": null,
+      "end_a_local": [
+        0.0,
+        -128.0
+      ],
+      "end_b_local": [
+        0.0,
+        128.0
+      ],
+      "footprint_slice": {
+        "slice_max_xy": [128.0, 128.0],
+        "slice_min_xy": [-128.0, -128.0],
+        "slice_outline_xy": [
+          [-128.0, -128.0],
+          [128.0, -128.0],
+          [128.0, 128.0],
+          [-128.0, 128.0]
+        ],
+        "slice_span_xy": [256.0, 256.0],
+        "slice_vertex_count": 4,
+        "z_band_gu": [-384.0, 128.0]
+      },
+      "height_gu": 512.0,
+      "length_gu": 256.0,
+      "long_axis": "y",
+      "model_key": "sky\\x\\sky_ex_cs_re_bx_01.nif",
+      "piece_id": "sky_ex_cs_re_bx_01",
+      "role": "end",
+      "scale_range": [1.0, 1.0],
+      "square": true,
+      "stackable": false,
+      "thickness_gu": 256.0,
+      "tier_height_gu": 0.0,
+      "weight": 0
+    }
+  ],
+  "slope_assembly": {
+    "minimum_deck_overlap_gu": 0.0,
+    "reverse_slope_piece_id": "sky_ex_cs_re_wl_05",
+    "slope_piece_id": "sky_ex_cs_re_wl_06",
+    "wall_piece_id": "sky_ex_cs_re_wl_01"
+  },
+  "provenance": {
+    "bounds_json": "configs\\kits\\falkreath\\wall_kit_bounds.json",
+    "complex_count": 1,
+    "excluded_members": 0,
+    "extract_config": "configs\\kits\\falkreath\\wall_kit_extract_config.json",
+    "gate_observed_tier_rotz_deltas_deg": [
+      0.0,
+      90.0
+    ],
+    "measurement": "z-slice (blender_wall_kit_slice.py), not full-mesh AABB",
+    "source_json": "F:\\ProcGenWorkspace\\output\\cityforge\\stamps\\generated\\falkreath\\source_extraction_v5\\complete_castle_cs_re_system.json",
+    "source_stamp": "falkreath_complete_castle_cs_re_system",
+    "wall_system_members": 484
+  },
+  "rules": {
+    "allowed_fill_piece_ids": [
+      "sky_ex_cs_re_wl_01"
+    ],
+    "anchor_inset_tolerance_gu": 256.0,
+    "anchor_mesh_overlap_gu": 0.0,
+    "burial_depth_gu": 0.0,
+    "corner_angle_threshold_deg": 65.0,
+    "corner_max_turn_deg": 120.0,
+    "doubled_wall_bottom_coverage_fraction": 0.15,
+    "fill_quantum_gu": 64.0,
+    "gate_tower_clearance_gu": 4096.0,
+    "max_fill_pieces": 48,
+    "max_wall_foundation_gap_gu": 1024.0,
+    "minimum_foundation_ground_z_gu": 64.0,
+    "max_step_down_gu": 160.0,
+    "min_tower_separation_gu": 2048.0,
+    "path_winding": "clockwise",
+    "piece_seam_tolerance_gu": 16.0,
+    "maximum_wall_bottom_coverage_fraction": 0.15,
+    "minimum_wall_bottom_coverage_fraction": 0.005,
+    "regular_wall_bottom_coverage_fraction": 0.005,
+    "slope_complexity_penalty_gu": 96.0,
+    "stair_at_step_gu": 480.0,
+    "tower_piece_id": "sky_ex_cs_re_twr_02",
+    "tower_scale": 0.79,
+    "tower_spacing_gu": 0.0,
+    "tower_height_changes_enabled": false,
+    "wall_tier_count": 1
+  }
+}

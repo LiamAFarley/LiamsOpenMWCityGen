@@ -118,7 +118,8 @@ def _normal_at(
     """Central-difference normal with source one-cell context at the edge."""
 
     def height(x: int, y: int) -> float:
-        if 0 <= x < FIELD_SIDE and 0 <= y < FIELD_SIDE:
+        field_h, field_w = values_gu.shape
+        if 0 <= x < field_w and 0 <= y < field_h:
             return float(values_gu[y, x])
         return block.outside_source_height_gu(x, y)
 
@@ -149,8 +150,9 @@ def analytic_normals_for_cell(
     x0 = (cell[0] - xs[0]) * 64
     y0 = (cell[1] - ys[0]) * 64
     field = np.asarray(values_gu, dtype=np.float64)
-    if field.shape != (FIELD_SIDE, FIELD_SIDE) or not np.isfinite(field).all():
-        raise VNMLConventionError("VNML input field must be finite 449x449 float64")
+    expected_shape = (len(ys) * 64 + 1, len(xs) * 64 + 1)
+    if field.shape != expected_shape or not np.isfinite(field).all():
+        raise VNMLConventionError(f"VNML input field must be finite {expected_shape} float64")
     result = np.empty((LAND_SIDE, LAND_SIDE, 3), dtype=np.float64)
     for local_y in range(LAND_SIDE):
         for local_x in range(LAND_SIDE):

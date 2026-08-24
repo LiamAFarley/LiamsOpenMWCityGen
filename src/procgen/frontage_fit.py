@@ -1,31 +1,43 @@
-"""Deterministic Cityforge Frontage Fit v1 geometry solver.
+"""Deterministic Cityforge frontage-fit v1 geometry and composition solver.
 
 Pipeline position
 ------------------
-This is the pure host-side search stage between an authored intent sketch and
-``tools/cityforge/plan_sketch.py``.  It consumes world-GU roads, spaces,
-district polygons, real full-precision stamp geometry, named target
-assignments, and a small terrain-mask protocol.  It emits exact centroid/
-yaw candidates and fit evidence; it does not render images, read images, run
-Blender or subprocesses, write TES3 records, or invent roads/spaces/stamps.
+This pure host-side stage sits between an authored world-GU intent sketch and
+``tools/cityforge/plan_sketch.py``.  It loads manifest-pinned, full-precision
+stamp hulls/doors, named authored or source targets, and a terrain-mask
+protocol; it emits the canonical intent copy, resolved centroid/yaw sketch,
+and fit report.  It does not render images, read images, run Blender or
+subprocesses, write TES3 records, select stamps semantically, or invent roads,
+spaces, districts, roles, targets, or geometry.
 
-The search is deliberately conservative and deterministic.  A primary door is
-placed at a prescribed frontage gap, yaw perturbations rotate around that
-fixed door point, unary geometry gates run before terrain sampling, and a
-complete MRV/forward-checking search over candidate compatibility chooses the
-first collision-free combination across lots (or proves exhaustively that none
-exists, within a deterministic node budget).  All named secondary doors are
-measured against their own explicit targets; there is no nearest-target
-fallback for an explicit assignment.
+The strict intent vocabulary keeps legacy ``kind`` while optionally adding
+road ``purpose`` and an urban/service-road
+``max_unsupported_frontage_gu`` bound, lot ``intentional_outlier``, and
+non-overlapping ``lot_groups``.  Group characters, target/order/sector
+declarations, and span, gap, same-side, and non-outlier bounds are authored;
+the fitter never infers them.  The optional lot ``frontage_side`` remains a
+polyline-only, segment-normal gate, while absent sides retain marker-derived
+behavior.  Explicit door targets are always measured against their assigned
+target; no nearest-target fallback is used.
 
-An optional lot key ``frontage_side`` ("left"/"right", relative to increasing
-point order of the primary polyline target) takes the sample-segment normal
-verbatim instead of inferring it from the marker, and rejects any constructed
-candidate whose resolved footprint centroid is not strictly on that side of
-the sampled segment (``frontage_centroid_wrong_side``).  When the key is
-absent the marker-derived side behavior is preserved unchanged.  The key is
-polyline-only: a polygon (plaza/court) primary target with an explicit side
-fails closed in :func:`fit_intent` before candidate generation.
+For composition-enabled intents, all unary-feasible candidates are retained
+for proof rather than treating the rank-best capped prefix as the whole
+domain.  Complete MRV/forward-checking passes widen the default 64-candidate
+prefix through 128, 256, 512, and the full retained domain (redundant widths
+are skipped), with one global node budget.  Complete collision-valid leaves
+are evaluated by :mod:`composition_eval`; all nine authored relationship
+finding codes are hard gates and rejected leaves continue exhaustive search.
+The resulting terminal code distinguishes unary, collision, relationship, and
+budget outcomes; budget exhaustion is inconclusive, never an impossibility
+proof.
+
+When feasibility succeeds for a composition intent, a separate bounded
+improvement walk starts from the hard-valid incumbent.  Its default budget is
+50,000 nodes and zero disables the walk.  It searches only the exact domain of
+the successful feasibility pass and compares a fixed lexicographic objective;
+disabled, exhausted, or faulted improvement retains the solved incumbent and
+reports the improvement evidence.  Intents without any composition
+declaration keep the legacy one capped pass and do not run improvement.
 """
 
 from __future__ import annotations
@@ -1484,10 +1496,13 @@ def _search_compatibility(
     ``selected=None`` with ``budget_exhausted=False``; budget exhaustion
     returns ``selected=None`` with ``budget_exhausted=True`` (inconclusive,
     plan §6).  On success every ``chosen`` index is asserted non-negative and
-    the selection is emitted in canonical lot order ``0..N-1``.  The first
-    complete assignment found is returned; it is rank-preferring locally but
-    not globally rank-optimal. With ``complete_assignment``, collision-valid
-    leaves are evaluated and hard-finding leaves continue backtracking.
+    the selection is emitted in canonical lot order ``0..N-1``.  One
+    feasibility pass returns its first complete assignment (or first
+    hard-valid assignment when ``complete_assignment`` is supplied); that
+    pass-local witness is rank-preferring locally, not a claim of global
+    rank-optimality.  ``fit_intent`` may widen composition passes and may then
+    run the separate bounded improvement phase.  Collision-valid leaves are
+    evaluated and hard-finding leaves continue backtracking.
     """
     lot_count = len(ordered)
     candidate_lists = tuple(
@@ -1611,6 +1626,30 @@ def _complete_select(
     domain this is ``(len(unary_feasible), lot id)`` exactly as in the legacy
     search. Candidate index is the position in the selected domain.
     """
+    ordered, compat, checks = _ordered_search_inputs(lot_candidates, candidate_domains)
+    return _search_compatibility(
+        ordered, compat, checks, config,
+        complete_assignment=complete_assignment,
+        candidate_domains=candidate_domains,
+        budget_state=budget_state,
+    )
+
+
+def _ordered_search_inputs(
+    lot_candidates: Sequence[_LotCandidates],
+    candidate_domains: Mapping[str, Sequence[Candidate]] | None = None,
+) -> tuple[
+    tuple[_LotCandidates, ...],
+    tuple[tuple[tuple[int, ...] | None, ...], ...],
+    int,
+]:
+    """Rebuild one pass's canonical order, domains, and compatibility matrix.
+
+    ``_complete_select`` and the post-feasibility improvement phase must use
+    the same positional matrix.  Keeping this small wrapper as the one place
+    that orders a pass makes rebuilding the successful pass deterministic
+    without changing the first-witness semantics of the feasibility search.
+    """
     def domain_size(item: _LotCandidates) -> int:
         if candidate_domains is None:
             return len(item.unary_feasible)
@@ -1621,12 +1660,7 @@ def _complete_select(
         key=lambda item: (domain_size(item), item.lot["id"]),
     )
     compat, checks = _build_compatibility(ordered, candidate_domains)
-    return _search_compatibility(
-        ordered, compat, checks, config,
-        complete_assignment=complete_assignment,
-        candidate_domains=candidate_domains,
-        budget_state=budget_state,
-    )
+    return tuple(ordered), compat, checks
 
 
 def _improve_assignment(
@@ -1641,13 +1675,14 @@ def _improve_assignment(
 ) -> _ImprovementResult:
     """Enumerate the successful feasibility domain for a better assignment.
 
-    This is intentionally a standalone second-phase engine.  It receives the
-    exact domains and directed compatibility rows from the successful hard
-    search pass; it never widens or rebuilds them, and it never changes
-    ``fit_intent`` selection.  The incumbent is evaluated first and is held as
-    the initial best.  A positive budget uses the same state-entry semantics as
-    feasibility search (the state that exceeds the budget is counted, then the
-    walk stops); zero means no traversal at all.  Any setup, evaluator, or
+    This is the bounded post-feasibility engine used by ``fit_intent``.  It
+    receives the exact domains and directed compatibility rows from the
+    successful hard-search pass; it never widens or rebuilds them.  It returns
+    a replacement assignment that the caller may adopt, but never mutates
+    ``fit_intent`` state itself.  The incumbent is evaluated first and is held
+    as the initial best.  A positive budget uses the same state-entry semantics
+    as feasibility search (the state that exceeds the budget is counted, then
+    the walk stops); zero means no traversal at all.  Any setup, evaluator, or
     traversal exception returns the incumbent unchanged.
 
     ``compat`` is accepted as a keyword alias for the longer
@@ -2119,6 +2154,14 @@ def fit_intent(
     ]
     composition_report: dict[str, Any] = {"roads": [], "groups": [], "findings": []}
     search_passes: list[dict[str, Any]] = []
+    successful_domain_width: int | None = None
+    successful_domain_sizes: tuple[tuple[str, int], ...] = ()
+    successful_domains: Mapping[str, Sequence[Candidate]] | None = None
+    successful_ordered: tuple[_LotCandidates, ...] | None = None
+    successful_compatibility: tuple[tuple[tuple[int, ...] | None, ...], ...] | None = None
+    feasibility_incumbent: tuple[tuple[str, Candidate], ...] | None = None
+    feasibility_composition: dict[str, Any] | None = None
+    improvement_report: dict[str, Any] | None = None
     if unresolved:
         # Unary short-circuit (plan §8): a lot with no unary-feasible
         # candidates is unsatisfied without any global search, and every
@@ -2214,6 +2257,26 @@ def fit_intent(
             counts["relationship_rejections"] = dict(sorted(cumulative_rejections.items()))
             if result is not None and result.selected is not None:
                 selected_by_id = {lot_id: candidate for lot_id, candidate in result.selected}
+                # Rebuild the exact successful pass inputs through the same
+                # canonical wrapper used by feasibility search.  The
+                # improvement walk must never widen or reconstruct a later
+                # domain, and it must consume the same positional matrix.
+                successful_domain_width = search_passes[-1]["domain_width"]
+                if successful_domain_width is None:
+                    raise FrontageFitError(
+                        "composition improvement invariant: successful domain width is missing")
+                successful_domains, successful_domain_sizes = _composition_domains(
+                    lot_results, successful_domain_width)
+                if successful_domains is None:
+                    raise FrontageFitError(
+                        "composition improvement invariant: successful candidate domains are missing")
+                successful_ordered, successful_compatibility, _ = _ordered_search_inputs(
+                    lot_results, successful_domains)
+                if successful_ordered is None or successful_compatibility is None:
+                    raise FrontageFitError(
+                        "composition improvement invariant: ordered results or compatibility matrix is missing")
+                feasibility_incumbent = result.selected
+                feasibility_composition = result.composition
             elif result is not None and result.stats.budget_exhausted:
                 unresolved = sorted(item.lot["id"] for item in lot_results)
                 terminal_failure = "search_budget_exhausted"
@@ -2236,6 +2299,95 @@ def fit_intent(
             unresolved = sorted(item.lot["id"] for item in lot_results)
             terminal_failure = ("search_budget_exhausted" if result.stats.budget_exhausted
                                 else "global_collision_unsatisfied")
+
+    if composition_enabled and terminal_failure is None:
+        # A solved composition pass always has a hard-valid incumbent and the
+        # exact retained domain/matrix that produced it.  The incumbent is
+        # also evaluated here so disabled/fault-safe reporting has the same
+        # objective component shape as a successful improvement result.
+        if (
+            successful_domain_width is None
+            or successful_domains is None
+            or successful_ordered is None
+            or successful_compatibility is None
+            or feasibility_incumbent is None
+            or feasibility_composition is None
+        ):
+            raise FrontageFitError(
+                "composition improvement invariant: successful feasibility inputs are incomplete")
+        _, incumbent_components = _assignment_preference(
+            intent_copy, feasibility_composition, feasibility_incumbent)
+        selected_for_report = feasibility_incumbent
+        selected_composition = feasibility_composition
+        selected_components = incumbent_components
+        improvement_enabled = config.improvement_node_budget > 0
+        improvement_nodes = 0
+        improvement_extensions = 0
+        improvement_collision_valid = 0
+        improvement_hard_valid = 0
+        improvement_relationship_rejections: Mapping[str, int] = {}
+        improvement_budget_exhausted = False
+        improvement_incumbent_improved = False
+        improvement_faulted = False
+        improvement_fault_code: str | None = None
+        improvement_domain_sizes = successful_domain_sizes
+
+        if improvement_enabled:
+            # _improve_assignment is internally fault-safe.  Keep this outer
+            # guard as well: an unexpected integration fault must not turn an
+            # already solved feasibility result into an unsolved fit.
+            try:
+                improvement = _improve_assignment(
+                    intent_copy,
+                    successful_ordered,
+                    successful_domains,
+                    successful_compatibility,
+                    feasibility_incumbent,
+                    config,
+                )
+            except Exception:  # noqa: BLE001 - preserve the hard-valid incumbent
+                improvement = None
+                improvement_faulted = True
+                improvement_fault_code = "improvement_exception"
+            if improvement is not None:
+                improvement_nodes = improvement.stats.nodes
+                improvement_extensions = improvement.stats.extensions
+                improvement_collision_valid = improvement.stats.collision_valid_assignments
+                improvement_hard_valid = improvement.stats.hard_valid_assignments
+                improvement_relationship_rejections = improvement.stats.relationship_rejections
+                improvement_budget_exhausted = improvement.stats.budget_exhausted
+                improvement_incumbent_improved = improvement.stats.incumbent_improved
+                improvement_domain_sizes = improvement.stats.domain_sizes
+                # A normal and fault-safe engine result always carries the
+                # composition for its selected hard-valid assignment.  If an
+                # unexpected result omits it, retain the feasibility pair.
+                if improvement.composition is not None and improvement.objective_components:
+                    selected_for_report = improvement.selected
+                    selected_composition = improvement.composition
+                    selected_components = improvement.objective_components
+
+        selected_by_id = {lot_id: candidate for lot_id, candidate in selected_for_report}
+        composition_report = selected_composition
+        improvement_report = {
+            "enabled": improvement_enabled,
+            "faulted": improvement_faulted,
+            "fault_code": improvement_fault_code,
+            "domain_width": successful_domain_width,
+            "domain_sizes": [
+                {"lot_id": lot_id, "count": count}
+                for lot_id, count in improvement_domain_sizes
+            ],
+            "node_budget": config.improvement_node_budget,
+            "nodes": improvement_nodes,
+            "extensions": improvement_extensions,
+            "collision_valid_assignments": improvement_collision_valid,
+            "hard_valid_assignments": improvement_hard_valid,
+            "relationship_rejections": dict(sorted(improvement_relationship_rejections.items())),
+            "budget_exhausted": improvement_budget_exhausted,
+            "incumbent_improved": improvement_incumbent_improved,
+            "incumbent_objective": incumbent_components,
+            "selected_objective": selected_components,
+        }
     if terminal_failure is None:
         status = "solved"
     elif terminal_failure == "search_budget_exhausted":
@@ -2246,6 +2398,15 @@ def fit_intent(
         "site": intent_copy["site"], "roads": intent_copy["roads"],
         "spaces": intent_copy["spaces"], "lots": [], "notes": intent_copy["notes"],
     }
+    assignment_limitation = (
+        "feasibility produces a first deterministic hard-valid incumbent; optional "
+        "improvement is a bounded lexicographic search over the successful "
+        "feasibility-pass domain, not all retained candidates or a global "
+        "aesthetic optimum"
+        if composition_enabled else
+        "complete MRV/forward-check search returns the first deterministic feasible "
+        "assignment, not a globally rank-optimal assignment"
+    )
     legacy_count_keys = (
         "candidate_generated", "candidate_deduplicated", "candidate_unary_feasible",
         "search_nodes", "search_extensions", "compatibility_checks",
@@ -2283,13 +2444,14 @@ def fit_intent(
             "plaza/court interior and buildability gates are intentionally stricter than current sketch advisories",
             "reach/safety/facing limit comparisons tolerate 1e-6 GU boundary float noise; values materially above the limit still fail",
             "--auto-face must not be applied to resolved fitter output",
-            "complete MRV/forward-check search returns the first deterministic feasible assignment, not a globally rank-optimal assignment",
+            assignment_limitation,
             "search_budget_exhausted is inconclusive and never proves geometric unsatisfiability",
             "complete search is recursive with one Python frame per assigned lot; exceptionally large intents approaching the interpreter's recursion limit require partitioning (the limit is platform-dependent)",
         ],
     }
     if composition_enabled and status == "solved":
         report["composition"] = composition_report
+        report["improvement"] = improvement_report
     if composition_enabled:
         report["candidate_unary_feasible_all"] = counts["candidate_unary_feasible_all"]
         report["search_passes"] = search_passes

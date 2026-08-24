@@ -359,7 +359,13 @@ def _load_field(path: Path, metadata_path: Path) -> tuple[np.ndarray, dict[str, 
             values = np.asarray(archive["height_gu"], dtype=np.float64)
     except (OSError, ValueError) as exc:
         raise RenderContractError(f"cannot load T1.3 final terrain field {path}: {exc}") from exc
-    _require(values.shape == (FIELD_SIDE, FIELD_SIDE), f"T1.3 final terrain shape is {values.shape}, expected {(FIELD_SIDE, FIELD_SIDE)}")
+    declared_shape = metadata.get("shape")
+    if isinstance(declared_shape, list) and len(declared_shape) == 2:
+        _require(
+            values.shape == (int(declared_shape[0]), int(declared_shape[1])),
+            f"T1.3 final terrain shape is {values.shape}, metadata declares {declared_shape}",
+        )
+    _require(values.ndim == 2, f"T1.3 final terrain field must be 2D, got {values.shape}")
     _require(np.isfinite(values).all(), "T1.3 final terrain contains non-finite heights")
     return values, metadata
 
@@ -380,17 +386,26 @@ def _validate_terrain_products(
     field, metadata = _load_field(paths.final_field, paths.final_field_metadata)
     field_hash = terrain_field_content_hash(field)
     _require(metadata.get("pass") == "final", "T1.5 must consume the T1.3 final terrain pass")
-    _require(metadata.get("shape") == [FIELD_SIDE, FIELD_SIDE], "T1.3 final terrain metadata shape is not 449x449")
+    _require(metadata.get("shape") == [int(v) for v in field.shape], "T1.3 final terrain metadata shape disagrees with the field array")
     _require(metadata.get("spacing_gu") == [FIELD_SPACING_GU, FIELD_SPACING_GU], "T1.3 final terrain spacing is not 128 GU")
     _require(metadata.get("terrain_field_sha256") == field_hash, "T1.3 final field content hash disagrees with metadata")
-    _require(int(metadata.get("cell_count", -1)) == 49, "T1.3 final terrain metadata does not declare 49 cells")
     cells_meta = metadata.get("cells")
-    _require(isinstance(cells_meta, list) and len(cells_meta) == 49, "T1.3 final terrain metadata has the wrong cell list")
+    _require(isinstance(cells_meta, list) and cells_meta, "T1.3 final terrain metadata has no cell list")
     cells = tuple(sorted((int(row[0]), int(row[1])) for row in cells_meta if isinstance(row, list) and len(row) == 2))
-    _require(len(cells) == 49, "T1.3 final terrain metadata contains malformed cells")
+    _require(len(cells) == len(cells_meta), "T1.3 final terrain metadata contains malformed cells")
+    _require(int(metadata.get("cell_count", -1)) == len(cells), "T1.3 final terrain metadata cell_count disagrees with its cell list")
     xs = sorted({cell[0] for cell in cells})
     ys = sorted({cell[1] for cell in cells})
-    _require(len(xs) == 7 and len(ys) == 7 and len(set(cells)) == 49, "T1.3 final terrain cells are not a 7x7 block")
+    _require(
+        xs == list(range(xs[0], xs[-1] + 1)) and ys == list(range(ys[0], ys[-1] + 1))
+        and len(set(cells)) == len(xs) * len(ys),
+        "T1.3 final terrain cells are not a contiguous rectangular block",
+    )
+    expected_field_shape = (len(ys) * 64 + 1, len(xs) * 64 + 1)
+    _require(
+        tuple(int(v) for v in field.shape) == expected_field_shape,
+        f"T1.3 final terrain shape {field.shape} disagrees with the {len(xs)}x{len(ys)} cell block",
+    )
 
     document = _read_json(paths.land_records, "T1.3 land_records.json")
     _require(isinstance(document, list), "T1.3 land_records.json must be a top-level array")
@@ -433,8 +448,8 @@ def _validate_terrain_products(
         binary_ltex = espland.load_ltex(scratch_plugin, max_seconds=180.0)
         binary_land_count = len(binary_land)
         binary_ltex_count = len(binary_ltex)
-        _require(binary_land_count == 49, f"scratch terrain plugin decoded {binary_land_count} LAND cells, expected 49")
-        _require(binary_ltex_count == 7, f"scratch terrain plugin decoded {binary_ltex_count} LTEX records, expected 7")
+        _require(binary_land_count == len(cells), f"scratch terrain plugin decoded {binary_land_count} LAND cells, expected {len(cells)}")
+        _require(binary_ltex_count == len(ltex_by_index), f"scratch terrain plugin decoded {binary_ltex_count} LTEX records, expected {len(ltex_by_index)}")
         binary_height_mismatches = 0
         for cell in cells:
             record = binary_land.get(cell)
@@ -448,10 +463,10 @@ def _validate_terrain_products(
     audit = {
         "required": True,
         "render_mode": "opaque_exact_t1_3_final_field",
-        "cells_expected": 49,
+        "cells_expected": len(cells),
         "cells_emitted": len(land_by_cell),
         "cells": [list(cell) for cell in cells],
-        "field_shape": [FIELD_SIDE, FIELD_SIDE],
+        "field_shape": [int(v) for v in field.shape],
         "field_spacing_gu": [FIELD_SPACING_GU, FIELD_SPACING_GU],
         "field_hash": field_hash,
         "field_npz_sha256": sha256_file(paths.final_field),
@@ -544,21 +559,22 @@ def terrain_height_scene(field: np.ndarray, x_scene: float, y_scene: float) -> f
     """
 
     values = np.asarray(field, dtype=np.float64)
-    if values.shape != (FIELD_SIDE, FIELD_SIDE):
-        raise RenderContractError(f"terrain LOS field has shape {values.shape}, expected {(FIELD_SIDE, FIELD_SIDE)}")
+    if values.ndim != 2:
+        raise RenderContractError(f"terrain LOS field must be 2D, got {values.shape}")
+    field_h, field_w = values.shape
     spacing_scene = FIELD_SPACING_GU * SCENE_UNITS_PER_GAME_UNIT
     fx = float(x_scene) / spacing_scene
     fy = float(y_scene) / spacing_scene
     edge_epsilon = 1.0e-9
-    if fx < -edge_epsilon or fy < -edge_epsilon or fx > FIELD_SIDE - 1 + edge_epsilon or fy > FIELD_SIDE - 1 + edge_epsilon:
+    if fx < -edge_epsilon or fy < -edge_epsilon or fx > field_w - 1 + edge_epsilon or fy > field_h - 1 + edge_epsilon:
         return None
     # The finite perimeter is a valid sample.  Clamp only floating-point
     # round-off at that exact boundary; genuine out-of-field points still
     # return None above rather than silently sampling a border value.
-    fx = min(FIELD_SIDE - 1.0, max(0.0, fx))
-    fy = min(FIELD_SIDE - 1.0, max(0.0, fy))
-    x0 = min(FIELD_SIDE - 2, max(0, int(math.floor(fx))))
-    y0 = min(FIELD_SIDE - 2, max(0, int(math.floor(fy))))
+    fx = min(field_w - 1.0, max(0.0, fx))
+    fy = min(field_h - 1.0, max(0.0, fy))
+    x0 = min(field_w - 2, max(0, int(math.floor(fx))))
+    y0 = min(field_h - 2, max(0, int(math.floor(fy))))
     tx = fx - x0
     ty = fy - y0
     x1 = x0 + 1
@@ -568,11 +584,23 @@ def terrain_height_scene(field: np.ndarray, x_scene: float, y_scene: float) -> f
     return (lower * (1.0 - ty) + upper * ty) * SCENE_UNITS_PER_GAME_UNIT
 
 
-def terrain_edge_clearance_scene(x_scene: float, y_scene: float) -> float:
-    """Return horizontal clearance from the finite final-field rectangle."""
+def terrain_edge_clearance_scene(
+    x_scene: float,
+    y_scene: float,
+    *,
+    span_x_scene: float | None = None,
+    span_y_scene: float | None = None,
+) -> float:
+    """Return horizontal clearance from the finite final-field rectangle.
 
-    side = (FIELD_SIDE - 1) * FIELD_SPACING_GU * SCENE_UNITS_PER_GAME_UNIT
-    return min(float(x_scene), float(y_scene), side - float(x_scene), side - float(y_scene))
+    Defaults to the Falkreath 7x7 span for backwards compatibility; callers
+    rendering a different site pass its actual spans (scene units).
+    """
+
+    default_span = (FIELD_SIDE - 1) * FIELD_SPACING_GU * SCENE_UNITS_PER_GAME_UNIT
+    span_x = default_span if span_x_scene is None else float(span_x_scene)
+    span_y = default_span if span_y_scene is None else float(span_y_scene)
+    return min(float(x_scene), float(y_scene), span_x - float(x_scene), span_y - float(y_scene))
 
 
 def terrain_line_of_sight(

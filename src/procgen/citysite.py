@@ -5,7 +5,8 @@ This module is the host-side survey stage of the Cityforge pipeline:
 ``read-only LAND/metadata -> stitched fields and masks -> site_survey.json``
 
 It deliberately does not author a plugin or alter any source asset.  The
-Falkreath builder supplies the remap ESP as the owning LAND/LTEX source and
+Falkreath builder supplies base LAND plus the corridor remap JSON as the
+owning in-memory LAND/LTEX source and
 uses :mod:`procgen.espland` for the engine-faithful VHGT/VTEX interpretation.
 The resulting 449 by 449 field is in game units at 128 GU spacing, while the
 planner masks are one byte per 512 GU tile.  All ordering is explicit and all
@@ -13,7 +14,7 @@ derived collections are sorted so repeated runs with the same inputs produce
 the same JSON and NPZ contents (apart from the normal ZIP timestamp metadata
 inside NumPy's compressed container).
 
-Inputs are the read-only remap ESP used for real terrain rendering,
+Inputs are base LAND plus the corridor remap JSON used for real terrain rendering,
 ``tamriel.esm`` for the authoritative source LAND and a sampled height
 cross-check, terrain-cell metadata, the remap count report, the authoritative
 settlement marker, and the v6 scatter audit.  Road evidence is decoded from
@@ -40,27 +41,82 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 
 from .espland import LAND_SIDE, THU_TO_GU, LandRecord, iter_land
-from .landroads import (
-    build_land_road_evidence,
-    source_selection_grids,
-)
+from .landroads import build_land_road_evidence, source_selection_grids
+from .road_semantics import load_road_assignments
 
 
 CELL_SIZE_GU = 8192.0
 TILE_SIZE_GU = 512.0
 FIELD_SPACING_GU = 128.0
 FIELD_VERTICES_PER_CELL = 64
-SITE_ID = "falkreath_v1"
-TARGET_BOUNDS = (-95, -89, -11, -5)
-ANCHOR_GRID = (-92, -10)
-REGION_ID = "R072"
-REGION_NAME = "KREATHI DALE"
-SETTLEMENT_MARKER_ID = "M0400"
-SETTLEMENT_NAME = "Falkreath"
-ROAD_RAW_VTEX = 78
 WATER_LEVEL_GU = 0.0
 SLOPE_BUILDABLE_LIMIT_DEG = 15.0
 STEEP_BANK_LIMIT_DEG = 25.0
+
+
+@dataclass(frozen=True)
+class SiteSpec:
+    """Identity and cell window of one settlement site.
+
+    Everything the survey bakes into its JSON that used to be a Falkreath
+    module constant now lives here, so a second settlement is a data change
+    (a JSON site config), not a code fork.  ``FALKREATH_V1`` reproduces the
+    historical module constants exactly.
+    """
+
+    site_id: str
+    target_bounds: tuple[int, int, int, int]  # (min_x, max_x, min_y, max_y), inclusive
+    anchor_grid: tuple[int, int]
+    region_id: str
+    region_name: str
+    marker_id: str
+    settlement_name: str
+
+    @property
+    def bounds(self) -> "SiteBounds":
+        return _bounds(self.target_bounds)
+
+    @classmethod
+    def from_json(cls, path: Path) -> "SiteSpec":
+        doc = _json_read(Path(path))
+        if not isinstance(doc, Mapping):
+            raise ValueError(f"site config must be a JSON object: {path}")
+        try:
+            bounds = tuple(int(v) for v in doc["target_bounds"])
+            anchor = tuple(int(v) for v in doc["anchor_grid"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"site config {path} has invalid bounds/anchor: {exc}") from exc
+        if len(bounds) != 4 or len(anchor) != 2:
+            raise ValueError(f"site config {path}: target_bounds must have 4 ints, anchor_grid 2")
+        return cls(
+            site_id=str(doc["site_id"]),
+            target_bounds=bounds,  # type: ignore[arg-type]
+            anchor_grid=anchor,  # type: ignore[arg-type]
+            region_id=str(doc["region_id"]),
+            region_name=str(doc["region_name"]),
+            marker_id=str(doc["marker_id"]),
+            settlement_name=str(doc["settlement_name"]),
+        )
+
+
+FALKREATH_V1 = SiteSpec(
+    site_id="falkreath_v1",
+    target_bounds=(-95, -89, -11, -5),
+    anchor_grid=(-92, -10),
+    region_id="R072",
+    region_name="KREATHI DALE",
+    marker_id="M0400",
+    settlement_name="Falkreath",
+)
+
+# Backwards-compatible aliases (Falkreath defaults); new code takes a SiteSpec.
+SITE_ID = FALKREATH_V1.site_id
+TARGET_BOUNDS = FALKREATH_V1.target_bounds
+ANCHOR_GRID = FALKREATH_V1.anchor_grid
+REGION_ID = FALKREATH_V1.region_id
+REGION_NAME = FALKREATH_V1.region_name
+SETTLEMENT_MARKER_ID = FALKREATH_V1.marker_id
+SETTLEMENT_NAME = FALKREATH_V1.settlement_name
 BAND_NAMES = {
     0: "sea",
     1: "coastal",
@@ -410,11 +466,14 @@ def build_site_survey(
     settlements_path: Path,
     scatter_path: Path,
     output_dir: Path,
+    land_source_json: Path | None = None,
+    road_assignments_path: Path | None = None,
     town_grammars_path: Path | None = None,
+    site: SiteSpec = FALKREATH_V1,
 ) -> dict[str, Any]:
-    """Build the complete host-side Falkreath survey and patch grammar data."""
+    """Build the complete host-side survey for one settlement site."""
 
-    bounds = _bounds(TARGET_BOUNDS)
+    bounds = site.bounds
     required = (
         (land_source, "LAND source"),
         (base_esm, "base ESM"),
@@ -425,15 +484,36 @@ def build_site_survey(
     )
     for path, label in required:
         _require_file(path, label)
+    if land_source_json is not None:
+        _require_file(land_source_json, "LAND remap JSON")
+    if road_assignments_path is not None:
+        _require_file(road_assignments_path, "road assignment config")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     target = set(bounds.grids)
     records = _load_selected_land(land_source, target)
+    if land_source_json is not None:
+        from .tes3json import land_records_from_json
+
+        remap_records = land_records_from_json(
+            json.loads(land_source_json.read_text(encoding="utf-8"))
+        )
+        records.update({grid: remap_records[grid] for grid in target if grid in remap_records})
+    report_document = _json_read(remap_report_path)
+    try:
+        assignment_document = (
+            _json_read(road_assignments_path)
+            if road_assignments_path is not None else report_document
+        )
+        road_assignments = load_road_assignments(assignment_document)
+    except ValueError as exc:
+        raise ValueError(f"LAND remap report road assignments are invalid: {exc}") from exc
+    road_raw_values = tuple(assignment.raw_vtex for assignment in road_assignments.values())
     # The road source selection is deliberately wider than the terrain render
     # selection.  All 81 records are decoded directly from tamriel.esm so an
     # exit is never inferred from a graph line that happens to cross the site
     # frame.
-    road_source_grids = set(source_selection_grids(TARGET_BOUNDS))
+    road_source_grids = set(source_selection_grids(site.target_bounds))
     base_records = _load_selected_land(base_esm, road_source_grids)
     terrain_rows = _terrain_rows(terrain_cells_path, bounds)
     settlements = _json_read(settlements_path)
@@ -442,12 +522,12 @@ def build_site_survey(
     marker_rows = [
         item
         for item in settlements["settlements"]
-        if isinstance(item, Mapping) and item.get("marker_id") == SETTLEMENT_MARKER_ID
+        if isinstance(item, Mapping) and item.get("marker_id") == site.marker_id
     ]
     if len(marker_rows) != 1:
-        raise ValueError(f"expected one authoritative {SETTLEMENT_MARKER_ID} marker, found {len(marker_rows)}")
+        raise ValueError(f"expected one authoritative {site.marker_id} marker, found {len(marker_rows)}")
     marker = marker_rows[0]
-    if marker.get("name") != SETTLEMENT_NAME or marker.get("game_cell") != list(ANCHOR_GRID):
+    if marker.get("name") != site.settlement_name or marker.get("game_cell") != list(site.anchor_grid):
         raise ValueError(f"authoritative marker mismatch: {marker}")
 
     height_gu = _stitch_heights(records, bounds)
@@ -457,36 +537,72 @@ def build_site_survey(
     raw_vtex_tiles = _raw_vtex_tiles(records, bounds)
     authoritative_road_mask, roads = build_land_road_evidence(
         base_records,
-        TARGET_BOUNDS,
-        raw_vtex=ROAD_RAW_VTEX,
+        site.target_bounds,
+        raw_vtex=road_raw_values,
         frame_origin_gu=bounds.origin_gu,
     )
     source_raw_vtex_tiles = _raw_vtex_tiles(base_records, bounds)
-    if not np.array_equal(source_raw_vtex_tiles, raw_vtex_tiles):
+    # Render land may differ from tamriel.esm VTEX ONLY at tiles the remap
+    # report explicitly declares (e.g. corridor slope-rule rewrites).  Any
+    # undeclared or missing declared difference fails closed.
+    declared_rewrites: dict[tuple[int, int, int, int], tuple[int, int]] = {}
+    for row in (report_document.get("vtex_rewrites", {}) or {}).get("per_cell", []) or []:
+        grid = row.get("grid")
+        if not isinstance(grid, list) or len(grid) != 2:
+            continue
+        for tile in row.get("tiles", []):
+            tx, ty, from_raw, to_raw = (int(v) for v in tile[:4])
+            declared_rewrites[(int(grid[0]), int(grid[1]), tx, ty)] = (from_raw, to_raw)
+    if not np.array_equal(source_raw_vtex_tiles, raw_vtex_tiles) or declared_rewrites:
         mismatch_count = int(np.count_nonzero(source_raw_vtex_tiles != raw_vtex_tiles))
-        raise ValueError(
-            "render LAND source VTEX differs from authoritative tamriel.esm "
-            f"at {mismatch_count} target tiles; refusing source/highlight mismatch"
-        )
+        errors: list[str] = []
+        seen: set[tuple[int, int, int, int]] = set()
+        min_x, min_y = bounds.min_x, bounds.min_y
+        diff_positions = np.argwhere(source_raw_vtex_tiles != raw_vtex_tiles)
+        for gy, gx in diff_positions:
+            cell_x, cell_y = min_x + int(gx) // 16, min_y + int(gy) // 16
+            key = (cell_x, cell_y, int(gx) % 16, int(gy) % 16)
+            seen.add(key)
+            expected = declared_rewrites.get(key)
+            source_raw = int(source_raw_vtex_tiles[gy, gx])
+            render_raw = int(raw_vtex_tiles[gy, gx])
+            if expected is None or expected != (source_raw, render_raw):
+                errors.append(
+                    f"undeclared VTEX change at cell ({cell_x},{cell_y}) tile {key[2:]}: {source_raw}->{render_raw}"
+                )
+        in_target = {
+            key for key in declared_rewrites
+            if bounds.min_x <= key[0] <= bounds.max_x and bounds.min_y <= key[1] <= bounds.max_y
+        }
+        missing = sorted(in_target - seen)
+        if missing:
+            errors.append(f"declared rewrite tiles with no source/render difference: {missing[:8]}")
+        if errors:
+            raise ValueError(
+                "render LAND source VTEX differs from authoritative tamriel.esm "
+                f"outside the declared remap rewrites ({mismatch_count} differing tiles): "
+                + "; ".join(errors[:8])
+            )
     scatter_tiles = _scatter_density(scatter_path, bounds)
-    tile_side = bounds.width_cells * 16
-    water_mask = np.zeros((tile_side, tile_side), dtype=np.uint8)
-    steep_bank_mask = np.zeros((tile_side, tile_side), dtype=np.uint8)
-    slope_tile_mean = np.zeros((tile_side, tile_side), dtype=np.float32)
-    for tile_y in range(tile_side):
-        for tile_x in range(tile_side):
+    tile_side_x = bounds.width_cells * 16
+    tile_side_y = bounds.height_cells * 16
+    water_mask = np.zeros((tile_side_y, tile_side_x), dtype=np.uint8)
+    steep_bank_mask = np.zeros((tile_side_y, tile_side_x), dtype=np.uint8)
+    slope_tile_mean = np.zeros((tile_side_y, tile_side_x), dtype=np.float32)
+    for tile_y in range(tile_side_y):
+        for tile_x in range(tile_side_x):
             ys, xs = _tile_slices(tile_x, tile_y)
             patch_height = height_gu[ys, xs]
             patch_slope = slope_deg[ys, xs]
             water_mask[tile_y, tile_x] = 1 if bool(np.any(patch_height <= WATER_LEVEL_GU)) else 0
             slope_tile_mean[tile_y, tile_x] = float(np.mean(patch_slope))
-    for tile_y in range(tile_side):
-        for tile_x in range(tile_side):
+    for tile_y in range(tile_side_y):
+        for tile_x in range(tile_side_x):
             if water_mask[tile_y, tile_x]:
                 continue
             neighbour_water = any(
-                0 <= nx < tile_side
-                and 0 <= ny < tile_side
+                0 <= nx < tile_side_x
+                and 0 <= ny < tile_side_y
                 and water_mask[ny, nx]
                 for nx, ny in (
                     (tile_x - 1, tile_y),
@@ -514,42 +630,47 @@ def build_site_survey(
     }
     row_water_cells = {grid for grid in bounds.grids if float(terrain_rows[grid][6]) > 0.0}
     road_tile_count = int(np.count_nonzero(road_mask))
-    report_document = _json_read(remap_report_path)
     report_road_count = sum(
-        int(item.get("raw_vtex_counts", {}).get(str(ROAD_RAW_VTEX), 0))
+        sum(int(item.get("raw_vtex_counts", {}).get(str(raw), 0)) for raw in road_raw_values)
         for item in report_document.get("per_cell_counts", [])
         if isinstance(item, Mapping)
         and item.get("grid") in [[x, y] for x, y in bounds.grids]
     )
     if road_tile_count != report_road_count:
         raise ValueError(
-            "authoritative tamriel.esm raw VTEX 78 count disagrees with the "
+            "authoritative source road count disagrees with the "
             f"remap report: source={road_tile_count} report={report_road_count}"
         )
 
-    output_ltex = (
-        report_document.get("output_ltex", {}).get("records", {}).get(str(ROAD_RAW_VTEX - 1))
-        if isinstance(report_document, Mapping)
-        else None
-    )
-    if not isinstance(output_ltex, Mapping):
-        raise ValueError("LAND remap report has no output LTEX metadata for raw VTEX 78")
-    roads["raw_vtex"].update(
-        {
-            "output_ltex_index": ROAD_RAW_VTEX - 1,
-            "output_ltex_record_id": str(output_ltex.get("record_id", "")),
-            "output_texture_path": str(output_ltex.get("file_name", "")),
+    output_records = report_document.get("output_ltex", {}).get("records", {})
+    roads["road_assignments"] = {
+        road_class: {
+            **assignment.to_dict(),
+            "output_ltex": output_records.get(str(assignment.ltex_index)),
         }
-    )
+        for road_class, assignment in road_assignments.items()
+    }
+    roads["raw_vtex"] = {
+        "values": list(road_raw_values),
+        "ltex_indices": [assignment.ltex_index for assignment in road_assignments.values()],
+    }
 
     roads["inputs"] = {
         "source_plugin": _input_reference(base_esm, workspace),
         "render_land_source": _input_reference(land_source, workspace),
+        "render_land_source_json": (
+            _input_reference(land_source_json, workspace)
+            if land_source_json is not None else None
+        ),
         "remap_report": _input_reference(remap_report_path, workspace),
+        "road_assignments": (
+            _input_reference(road_assignments_path, workspace)
+            if road_assignments_path is not None else None
+        ),
     }
     roads["source_count_crosscheck"] = {
-        "decoded_target_raw_vtex_78": road_tile_count,
-        "remap_report_target_raw_vtex_78": report_road_count,
+        "decoded_configured_road_tiles": road_tile_count,
+        "remap_report_configured_road_tiles": report_road_count,
         "counts_match": road_tile_count == report_road_count,
     }
     roads["rejected_vector_graph"] = {
@@ -601,7 +722,12 @@ def build_site_survey(
                 "water_dist_gu": int(row[7]),
                 "band": BAND_NAMES.get(int(row[8]), str(row[8])),
                 "vtex_histogram": dict(sorted(counts.items(), key=lambda pair: int(pair[0]))),
-                "road_tiles_78": int(counts.get(str(ROAD_RAW_VTEX), 0)),
+                "road_tiles_configured": int(
+                    sum(counts.get(str(raw), 0) for raw in road_raw_values)
+                ),
+                "road_tiles_78": int(
+                    sum(counts.get(str(raw), 0) for raw in road_raw_values)
+                ),
                 "land_flag": int(row[9]),
                 "source_land_min_gu_measured": int(metric_checks[len(cells)]["land_measured"]["elev_min_gu"]),
                 "source_land_med_gu_measured": int(metric_checks[len(cells)]["land_measured"]["elev_med_gu"]),
@@ -623,7 +749,7 @@ def build_site_survey(
 
     survey: dict[str, Any] = {
         "schema_version": 1,
-        "survey_id": SITE_ID,
+        "survey_id": site.site_id,
         "target_cells": {
             "min_x": bounds.min_x,
             "max_x": bounds.max_x,
@@ -640,29 +766,40 @@ def build_site_survey(
         },
         "inputs": {
             "land_source": _input_reference(land_source, workspace),
+            "land_source_json": (
+                _input_reference(land_source_json, workspace)
+                if land_source_json is not None else None
+            ),
             "base_esm": _input_reference(base_esm, workspace),
             "terrain_cells": _input_reference(terrain_cells_path, workspace),
             "land_roads_source": _input_reference(base_esm, workspace),
             "land_remap_report": _input_reference(remap_report_path, workspace),
+            "road_assignments": (
+                _input_reference(road_assignments_path, workspace)
+                if road_assignments_path is not None else None
+            ),
             "settlements": _input_reference(settlements_path, workspace),
             "existing_scatter": _input_reference(scatter_path, workspace),
         },
         "region": {
-            "id": REGION_ID,
-            "name": REGION_NAME,
+            "id": site.region_id,
+            "name": site.region_name,
             "cell_set_definition": "ptr_planning_polygon",
         },
         "seed_settlement": {
-            "marker_id": SETTLEMENT_MARKER_ID,
-            "name": SETTLEMENT_NAME,
-            "anchor_cell": list(ANCHOR_GRID),
+            "marker_id": site.marker_id,
+            "name": site.settlement_name,
+            "anchor_cell": list(site.anchor_grid),
             "masterlist": {"type": "Town (hold capital)", "status": "planned"},
             "authoritative_source": "output/mapdata/settlements.json",
         },
         "cells": cells,
         "tile_grids": {
             "tile_size_gu": int(TILE_SIZE_GU),
-            "side": tile_side,
+            # [rows(y), cols(x)]; "side" is retained only for square sites so
+            # older consumers keep working on the Falkreath 112x112 bundle.
+            "sides": [tile_side_y, tile_side_x],
+            **({"side": tile_side_x} if tile_side_x == tile_side_y else {}),
             "axis_order": "row-major [y,x], SW frame origin",
             "water_mask": _b64_array(water_mask),
             "buildable_mask": _b64_array(buildable_mask),
@@ -697,6 +834,7 @@ def build_site_survey(
             "terrain_above_water_cells": len(bounds.grids) - len(water_cells),
             "elev_range_gu": [int(min(row[2] for row in terrain_rows.values())), int(max(row[4] for row in terrain_rows.values()))],
             "slope_mean_deg": round(float(np.mean([float(row[5]) for row in terrain_rows.values()])), 2),
+            "road_tiles_configured": road_tile_count,
             "road_tiles_78": road_tile_count,
             "scatter_refs_measured": int(np.sum(scatter_tiles)),
             "buildable_tiles": int(np.count_nonzero(buildable_mask)),
@@ -714,10 +852,10 @@ def build_site_survey(
             "water_cells_from_land": [[x, y] for x, y in sorted(water_cells)],
             "water_cells_from_terrain_cells_water_frac": [[x, y] for x, y in sorted(row_water_cells)],
             "water_cell_sets_match": water_cells == row_water_cells,
-            "road_tiles_78_measured_from_land": road_tile_count,
-            "road_tiles_78_report_crosscheck": report_road_count,
+            "road_tiles_configured_measured_from_land": road_tile_count,
+            "road_tiles_configured_report_crosscheck": report_road_count,
             "road_tile_counts_match_report": road_tile_count == report_road_count,
-            "road_mask_source": "tamriel.esm LAND/VTEX raw 78",
+            "road_mask_source": "tamriel.esm LAND/VTEX configured road assignments",
             "road_mask_render_source_raw_vtex_match": bool(
                 np.array_equal(source_raw_vtex_tiles, raw_vtex_tiles)
             ),
@@ -813,10 +951,11 @@ def patch_town_grammar(path: Path) -> dict[str, Any]:
 __all__ = [
     "ANCHOR_GRID",
     "CELL_SIZE_GU",
+    "FALKREATH_V1",
     "FIELD_SPACING_GU",
-    "ROAD_RAW_VTEX",
     "SITE_ID",
     "SiteBounds",
+    "SiteSpec",
     "TARGET_BOUNDS",
     "build_site_survey",
     "patch_town_grammar",

@@ -96,9 +96,10 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from . import aligned_roads
+from .road_semantics import load_road_assignments, road_class_for_plan_road
 
 # ---------------------------------------------------------------------------
 # Contract constants (all consumed from the accepted bundle at runtime;
@@ -115,6 +116,38 @@ TILE_SIDE = 112
 TILE_SIZE_GU = 512
 #: Survey LAND field spacing in GU.
 FIELD_SPACING_GU = 128
+
+# Configured per loaded survey (see configure_from_survey).  Module-level
+# because one process plans one settlement at a time; every consumer reads
+# these at call time.  [x, y] order.
+_SPAN_GU_XY = [SITE_SPAN_GU, SITE_SPAN_GU]
+_TILE_SIDES_XY = [TILE_SIDE, TILE_SIDE]
+
+
+def configure_from_survey(survey: Mapping) -> tuple[float, float]:
+    """Pin plan-frame span and tile-grid sides from a site survey.
+
+    Reads ``frame.site_span_gu`` ([w, h] GU) and ``tile_grids.sides``
+    ([rows(y), cols(x)], falling back to square ``tile_grids.side``).  Any
+    rectangular site is supported.  Returns (span_x_gu, span_y_gu).
+    """
+
+    frame = survey.get("frame") if isinstance(survey, Mapping) else None
+    if not isinstance(frame, Mapping) or not isinstance(frame.get("site_span_gu"), list):
+        raise BundleError("site survey frame.site_span_gu is missing")
+    span = frame["site_span_gu"]
+    _SPAN_GU_XY[0], _SPAN_GU_XY[1] = float(span[0]), float(span[1])
+    tg = survey.get("tile_grids")
+    if not isinstance(tg, Mapping):
+        raise BundleError("site survey tile_grids is missing")
+    if isinstance(tg.get("sides"), list):
+        sides = tg["sides"]
+        _TILE_SIDES_XY[0], _TILE_SIDES_XY[1] = int(sides[1]), int(sides[0])
+    elif tg.get("side") is not None:
+        _TILE_SIDES_XY[0] = _TILE_SIDES_XY[1] = int(tg["side"])
+    else:
+        raise BundleError("site survey tile_grids has neither sides nor side")
+    return _SPAN_GU_XY[0], _SPAN_GU_XY[1]
 #: Contact epsilon (GU) from the extraction contact graph / D-PLACE.
 CONTACT_EPSILON_GU = 0.25
 
@@ -567,17 +600,19 @@ def polygon_centroid(points: list) -> tuple[float, float]:
 
 
 def tiles_covered_by_ring(ring: list, tile_size: int = TILE_SIZE_GU,
-                          side: int = TILE_SIDE) -> list[tuple[int, int]]:
+                          side: Optional[tuple[int, int]] = None) -> list[tuple[int, int]]:
     """Tile indices (tx, ty) whose centers lie inside the ring.  Tile
     (tx, ty) covers plan GU [tx*tile_size, (tx+1)*tile_size) x
-    [ty*tile_size, (ty+1)*tile_size)."""
+    [ty*tile_size, (ty+1)*tile_size).  ``side`` is (sx, sy); defaults to the
+    configured survey tile-grid sides."""
+    sx, sy = side if side is not None else (_TILE_SIDES_XY[0], _TILE_SIDES_XY[1])
     pts = close_ring(ring)
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
     t0x = max(0, int(math.floor(min(xs) / tile_size)))
-    t1x = min(side - 1, int(math.floor(max(xs) / tile_size)))
+    t1x = min(sx - 1, int(math.floor(max(xs) / tile_size)))
     t0y = max(0, int(math.floor(min(ys) / tile_size)))
-    t1y = min(side - 1, int(math.floor(max(ys) / tile_size)))
+    t1y = min(sy - 1, int(math.floor(max(ys) / tile_size)))
     out = []
     for ty in range(t0y, t1y + 1):
         for tx in range(t0x, t1x + 1):
@@ -598,21 +633,23 @@ def gu_to_field(x: float, y: float) -> tuple[int, int]:
 
 
 def in_scope(x: float, y: float) -> bool:
-    """Plan-frame GU inside the site [0, span) x [0, span)."""
-    return 0.0 <= x < SITE_SPAN_GU and 0.0 <= y < SITE_SPAN_GU
+    """Plan-frame GU inside the site [0, span_x) x [0, span_y)."""
+    return 0.0 <= x < _SPAN_GU_XY[0] and 0.0 <= y < _SPAN_GU_XY[1]
 
 
 # ---------------------------------------------------------------------------
 # Bundle: the accepted planner inputs, loaded and pinned at runtime
 # ---------------------------------------------------------------------------
 
-def decode_tile_mask(base64_text: str, side: int = TILE_SIDE) -> list[list[int]]:
+def decode_tile_mask(base64_text: str, side: Optional[tuple[int, int]] = None) -> list[list[int]]:
     """Decode a survey tile mask (uint8, row-major [y, x], SW origin) into a
-    side x side nested list of ints."""
+    sy-row by sx-column nested list of ints.  ``side`` is (sx, sy); defaults
+    to the configured survey tile-grid sides."""
+    sx, sy = side if side is not None else (_TILE_SIDES_XY[0], _TILE_SIDES_XY[1])
     raw = base64.b64decode(base64_text)
-    if len(raw) != side * side:
-        raise ValueError(f"mask byte length {len(raw)} != {side * side}")
-    return [[raw[y * side + x] for x in range(side)] for y in range(side)]
+    if len(raw) != sx * sy:
+        raise ValueError(f"mask byte length {len(raw)} != {sx * sy}")
+    return [[raw[y * sx + x] for x in range(sx)] for y in range(sy)]
 
 
 @dataclass
@@ -643,6 +680,8 @@ class Bundle:
     stamp_geometry: dict = field(default_factory=dict)     # stamp_id -> library stamp
     surfaces: list = field(default_factory=list)           # closed vocabulary
     surface_set: set = field(default_factory=set)
+    road_assignments: dict = field(default_factory=dict)
+    road_class_by_hierarchy: dict[str, str] = field(default_factory=dict)
     constraints: dict = field(default_factory=dict)
     edge_ids: set = field(default_factory=set)
     node_ids: set = field(default_factory=set)
@@ -696,11 +735,12 @@ class Bundle:
         return bundle
 
     def _derive(self) -> None:
+        configure_from_survey(self.site_survey)
         tg = self.site_survey["tile_grids"]
-        if tg["side"] != TILE_SIDE or tg["tile_size_gu"] != TILE_SIZE_GU:
+        if tg["tile_size_gu"] != TILE_SIZE_GU:
             raise BundleError(
-                f"survey tile grid {tg['side']}x{tg['tile_size_gu']} does not match "
-                f"the T1.1 contract {TILE_SIDE}x{TILE_SIZE_GU}")
+                f"survey tile size {tg['tile_size_gu']} does not match "
+                f"the T1.1 contract {TILE_SIZE_GU}")
         self.water_mask = decode_tile_mask(tg["water_mask"])
         self.buildable_mask = decode_tile_mask(tg["buildable_mask"])
         # Eligible stamps: kit brief is the accepted eligible list.  Each
@@ -724,6 +764,15 @@ class Bundle:
         self.surfaces = [s["surface"]
                          for s in self.region_palette["semantic_surfaces"]["surfaces"]]
         self.surface_set = set(self.surfaces)
+        try:
+            self.road_assignments = load_road_assignments(self.region_palette)
+        except ValueError as exc:
+            raise BundleError(f"region palette road assignments are invalid: {exc}") from exc
+        self.road_class_by_hierarchy = {
+            str(key): str(value)
+            for key, value in (self.region_palette.get("road_class_by_hierarchy") or {}).items()
+        }
+        self.surface_set.update(self.road_assignments)
         # Survey constraints (soft diagnostics).
         self.constraints = dict(DEFAULT_CONSTRAINTS)
         self.constraints.update(self.site_survey.get("constraints", {}))
@@ -753,7 +802,7 @@ class Bundle:
     # -- mask helpers -------------------------------------------------------
 
     def tile_value(self, mask: list, tx: int, ty: int) -> Optional[int]:
-        if 0 <= tx < TILE_SIDE and 0 <= ty < TILE_SIDE:
+        if 0 <= tx < _TILE_SIDES_XY[0] and 0 <= ty < _TILE_SIDES_XY[1]:
             return mask[ty][tx]
         return None
 
@@ -835,6 +884,7 @@ def measure_map_exits(centerlines: Any, plan_origin: tuple) -> dict[str, dict]:
     raw-78 continuation spans are informational and never drive geometry.
     """
     exits: dict[str, dict] = {}
+    span_x, span_y = _SPAN_GU_XY[0], _SPAN_GU_XY[1]
     edges = (centerlines.edges.values() if hasattr(centerlines, "edges")
              else centerlines["edges"])
     for edge in edges:
@@ -844,7 +894,7 @@ def measure_map_exits(centerlines: Any, plan_origin: tuple) -> dict[str, dict]:
         found: dict[str, list] = {}
         for a, b in zip(pts, pts[1:]):
             for side, line in (("south", 0.0), ("west", 0.0),
-                               ("north", SITE_SPAN_GU), ("east", SITE_SPAN_GU)):
+                               ("north", span_y), ("east", span_x)):
                 if side in ("south", "north"):
                     if (a[1] - line) * (b[1] - line) > 0:
                         continue
@@ -854,9 +904,9 @@ def measure_map_exits(centerlines: Any, plan_origin: tuple) -> dict[str, dict]:
                     if not (0.0 <= t <= 1.0):
                         continue
                     px = a[0] + t * (b[0] - a[0])
-                    if not (-1e-6 <= px <= SITE_SPAN_GU + 1e-6):
+                    if not (-1e-6 <= px <= span_x + 1e-6):
                         continue
-                    p = (round(min(max(px, 0.0), SITE_SPAN_GU), 1), line)
+                    p = (round(min(max(px, 0.0), span_x), 1), line)
                 else:
                     if (a[0] - line) * (b[0] - line) > 0:
                         continue
@@ -866,9 +916,9 @@ def measure_map_exits(centerlines: Any, plan_origin: tuple) -> dict[str, dict]:
                     if not (0.0 <= t <= 1.0):
                         continue
                     py = a[1] + t * (b[1] - a[1])
-                    if not (-1e-6 <= py <= SITE_SPAN_GU + 1e-6):
+                    if not (-1e-6 <= py <= span_y + 1e-6):
                         continue
-                    p = (line, round(min(max(py, 0.0), SITE_SPAN_GU), 1))
+                    p = (line, round(min(max(py, 0.0), span_y), 1))
                 found.setdefault(side, []).append(p)
         for side, points in found.items():
             exit_id = f"exit_{side}_{edge_id}"
@@ -1218,7 +1268,7 @@ def validate_plan(plan: dict, bundle: Bundle) -> dict:
                                        _path(cbase, "texture"),
                                        f"texture {tex!r} is not in the region "
                                        f"palette closed surface vocabulary"))
-                if tex == "road":
+                if tex in bundle.road_assignments:
                     has_road = True
                 weight = cls.get("weight")
                 if isinstance(weight, (int, float)) and not isinstance(weight, bool):
@@ -1235,8 +1285,8 @@ def validate_plan(plan: dict, bundle: Bundle) -> dict:
             if has_road:
                 issues.append(_err(
                     "zone_references_protected_road", base,
-                    "texture zones must not paint the protected raw-78 road "
-                    "surface; road identity is authored by the road stage"))
+                    "texture zones must not paint a declared road class; "
+                    "road identity is authored by the road stage"))
 
     # -- roads --------------------------------------------------------------
     roads = plan.get("roads") or []
@@ -1271,12 +1321,14 @@ def validate_plan(plan: dict, bundle: Bundle) -> dict:
             issues.append(_err("road_surface_invalid", _path(base, "surface"),
                                f"surface {surface!r} is not in the region palette "
                                f"closed surface vocabulary"))
-        elif road.get("class") in ("street", "approach") and surface != "road":
-            issues.append(_err(
-                "road_surface_not_road", _path(base, "surface"),
-                f"class {road.get('class')!r} must keep the protected raw-78 "
-                f"road identity (surface 'road'); scatter/groundcover gates "
-                f"key on it"))
+        try:
+            road_class_for_plan_road(
+                road,
+                bundle.road_assignments,
+                bundle.road_class_by_hierarchy,
+            )
+        except ValueError as exc:
+            issues.append(_err("road_class_invalid", _path(base, "road_class"), str(exc)))
         connects = road.get("connects")
         ext_refs: list = []
         if isinstance(connects, list):
@@ -1357,9 +1409,9 @@ def validate_plan(plan: dict, bundle: Bundle) -> dict:
         if not in_scope(x, y):
             issues.append(_err("out_of_scope", _path(base, "position"),
                                f"lot anchor ({x:.1f}, {y:.1f}) is outside the "
-                               f"plan frame [0, {SITE_SPAN_GU:.0f}) x [0, "
-                               f"{SITE_SPAN_GU:.0f})", [round(x, 1), round(y, 1)],
-                               SITE_SPAN_GU))
+                               f"plan frame [0, {_SPAN_GU_XY[0]:.0f}) x [0, "
+                               f"{_SPAN_GU_XY[1]:.0f})", [round(x, 1), round(y, 1)],
+                               list(_SPAN_GU_XY)))
         else:
             state = bundle.door_anchor_state(x, y)
             if not state["buildable"]:
@@ -2002,16 +2054,16 @@ def _cells_covered(polygon: list, cells_by_gu: dict, origin_gu: list) -> list:
 def _nearest_water_distance(bundle: Bundle, x: float, y: float) -> float:
     tx, ty = gu_to_tile(x, y)
     best = float("inf")
-    for wy in range(max(0, ty - 3), min(TILE_SIDE, ty + 4)):
-        for wx in range(max(0, tx - 3), min(TILE_SIDE, tx + 4)):
+    for wy in range(max(0, ty - 3), min(_TILE_SIDES_XY[1], ty + 4)):
+        for wx in range(max(0, tx - 3), min(_TILE_SIDES_XY[0], tx + 4)):
             if bundle.tile_water(wx, wy):
                 cx = wx * TILE_SIZE_GU + TILE_SIZE_GU / 2.0
                 cy = wy * TILE_SIZE_GU + TILE_SIZE_GU / 2.0
                 best = min(best, math.hypot(cx - x, cy - y))
     if best == float("inf"):
         # no water within the probe window: scan the full mask (rare)
-        for wy in range(TILE_SIDE):
-            for wx in range(TILE_SIDE):
+        for wy in range(_TILE_SIDES_XY[1]):
+            for wx in range(_TILE_SIDES_XY[0]):
                 if bundle.tile_water(wx, wy):
                     cx = wx * TILE_SIZE_GU + TILE_SIZE_GU / 2.0
                     cy = wy * TILE_SIZE_GU + TILE_SIZE_GU / 2.0

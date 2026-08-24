@@ -34,7 +34,7 @@ SRC = WORKSPACE / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from procgen.citysite import TARGET_BOUNDS, build_site_survey  # noqa: E402
+from procgen.citysite import FALKREATH_V1, SiteSpec, build_site_survey  # noqa: E402
 
 
 def _path(workspace: Path, value: str) -> Path:
@@ -50,35 +50,63 @@ def main(argv: list[str] | None = None) -> int:
         default="output/cityforge/sites/falkreath_v1",
         help="D-SITE bundle directory, relative to --workspace",
     )
-    parser.add_argument("--land-source", default="output/falkreath_landscape_texture_remap.esp")
+    parser.add_argument("--land-source", default="tamriel.esm")
+    parser.add_argument(
+        "--land-source-json",
+        default="output/corridor_landscape_remap.json",
+        help="optional corridor remap LAND JSON layered over --land-source",
+    )
     parser.add_argument("--base-esm", default="tamriel.esm")
     parser.add_argument("--terrain-cells", default="output/terrain_cells.json")
     parser.add_argument(
         "--remap-report",
-        default="output/falkreath_landscape_texture_remap_report.json",
+        default="output/corridor_landscape_remap_report.json",
         help="independent raw-VTEX count report used as a fail-closed cross-check",
     )
+    parser.add_argument(
+        "--road-assignments",
+        default="configs/landscape/corridor_falkreath_neugrad_v1.json",
+        help="semantic road assignment JSON; defaults to the remap report",
+    )
     parser.add_argument("--settlements", default="output/mapdata/settlements.json")
-    parser.add_argument("--scatter", default="output/scatter_falkreath_v6.json")
+    parser.add_argument("--scatter", default="output/scatter_kreathi_dale_v1_opt4.json")
     parser.add_argument("--town-grammars", default="output/town_grammars.json")
+    parser.add_argument(
+        "--site-config",
+        default=None,
+        help="settlement site JSON (site_id, target_bounds, anchor_grid, region, marker); "
+        "default is the built-in Falkreath falkreath_v1 site",
+    )
     args = parser.parse_args(argv)
 
     workspace = Path(args.workspace).resolve()
+    site = FALKREATH_V1 if args.site_config is None else SiteSpec.from_json(_path(workspace, args.site_config))
     result = build_site_survey(
         workspace=workspace,
         land_source=_path(workspace, args.land_source),
+        land_source_json=(
+            _path(workspace, args.land_source_json)
+            if args.land_source_json is not None else None
+        ),
+        road_assignments_path=(
+            _path(workspace, args.road_assignments)
+            if args.road_assignments is not None else None
+        ),
         base_esm=_path(workspace, args.base_esm),
         terrain_cells_path=_path(workspace, args.terrain_cells),
         remap_report_path=_path(workspace, args.remap_report),
         settlements_path=_path(workspace, args.settlements),
         scatter_path=_path(workspace, args.scatter),
         output_dir=_path(workspace, args.output_dir),
-        town_grammars_path=_path(workspace, args.town_grammars),
+        # The town_grammars byte patch is a Falkreath-specific stale-row fix;
+        # never apply it to another settlement's survey run.
+        town_grammars_path=_path(workspace, args.town_grammars) if args.site_config is None else None,
+        site=site,
     )
     survey = result["survey"]
     grammar = result["grammar_evidence"]
     print(f"survey_id={survey['survey_id']}")
-    print(f"target_bounds={TARGET_BOUNDS} cells={len(survey['cells'])}")
+    print(f"target_bounds={site.target_bounds} cells={len(survey['cells'])}")
     print(f"water_cells={survey['stats']['water_cells']} water_tiles={survey['stats']['water_tiles']}")
     print(
         f"road_tiles_78={survey['stats']['road_tiles_78']} "
