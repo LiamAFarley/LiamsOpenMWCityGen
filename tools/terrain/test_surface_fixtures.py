@@ -35,6 +35,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from procgen.terrain_blend import solve_surface  # noqa: E402
+from procgen.terrainfield import (  # noqa: E402
+    hillshade, hypsometric_rgb, save_shade_png,
+)
 
 N = 192
 SEAM_ROW = 96          # horizontal seam at this vertex row (tam side below)
@@ -46,9 +49,12 @@ TARGET_LOW = 200.0
 
 def _base_ctx(kind: str) -> dict:
     # The seam row is part of the solve band (production seam verts are the
-    # tamriel cell's own edge vertices, inside the mask).
+    # tamriel cell's own edge vertices, inside the mask). The band is wider
+    # than the seam run so the seam ENDPOINTS are interior vertices — a seam
+    # end touching the band's side ring would legitimately create a local
+    # corner step that is not representative of production corridors.
     smask = np.zeros((N, N), dtype=bool)
-    smask[SEAM_ROW:SEAM_ROW + 1 + BLEND_CELLS * 8, 8:N - 8] = True
+    smask[SEAM_ROW:SEAM_ROW + 1 + BLEND_CELLS * 8, 2:N - 2] = True
     own_view = np.full((N, N), TARGET_LOW, dtype=np.float32)
     target = np.full((N, N), TARGET_LOW, dtype=np.float32)
     hard = np.zeros((N, N), dtype=bool)
@@ -83,9 +89,12 @@ def _base_ctx(kind: str) -> dict:
     width = np.full((N, N), float(BLEND_CELLS), np.float32)
 
     edge_list = _edge_list(kind, smask)
+    seam_v = np.zeros((N, N), dtype=bool)
+    for e in edge_list:
+        seam_v.ravel()[e["verts"]] = True
 
-    return dict(smask=smask, target=target, own_view=own_view, hard=hard,
-                hard_vals=hard_vals, dist_seam=dist, width_cells=width,
+    return dict(smask=smask, seam_v=seam_v, target=target, own_view=own_view,
+                hard=hard, hard_vals=hard_vals, dist_seam=dist, width_cells=width,
                 edge_list=edge_list, tam_w=np.zeros((N, N), np.float32))
 
 
@@ -143,20 +152,24 @@ def _edge_list(kind, smask):
 
 def _check(kind: str, ctx: dict, field: np.ndarray, report: dict) -> list:
     fails = []
-    seam = ctx["hard"] & (ctx["hard_vals"] > 1.0)
+    seam = ctx["seam_v"]
     c0 = float(np.abs(field[seam] - ctx["own_view"][seam]).max()) if seam.any() else 0.0
     if c0 > 1e-3:
         fails.append(f"C0 {c0:.1f} != 0")
     if np.isnan(field[ctx["smask"]]).any():
         fails.append("NaN inside solve band")
-    # first-edge drop along the seam
-    drops = []
-    sm = ctx["smask"]
-    for r in range(SEAM_ROW + 1, min(SEAM_ROW + 4, N)):
-        row_ok = sm[r, 8:N - 8]
-        if row_ok.any():
-            drops.append(float(np.abs(field[r, 8:N - 8] - np.roll(field, 1, 0)[r, 8:N - 8]).max()))
-    first = drops[0] if drops else 0.0
+    # Edge-based normal first drop: |field(inland) - field(seam)| per seam
+    # vertex, using each edge's own normal (row-difference checks would
+    # conflate normal drops with legitimate tangential seam variation).
+    H, W = field.shape
+    max_drop = 0.0
+    for e in ctx["edge_list"]:
+        dy, dx = int(round(e["normal"][0])), int(round(e["normal"][1]))
+        for f in e["verts"]:
+            uy, ux = f // W + dy, f % W + dx
+            if 0 <= uy < H and 0 <= ux < W and ctx["smask"][uy, ux]:
+                max_drop = max(max_drop, abs(float(field[uy, ux]) - float(field[f // W, f % W])))
+    first = max_drop
     limit = GRADE / 8.0 * 2.0     # 2 cells of grade per first vertex allowed
     if first > limit:
         fails.append(f"first-edge drop {first:.0f} > {limit:.0f} GU")
@@ -171,6 +184,15 @@ def _check(kind: str, ctx: dict, field: np.ndarray, report: dict) -> list:
 
 def main() -> int:
     all_fails = []
+    render_dir = ROOT / "output" / "mapdata" / "terrain" / "tamriel_reworked" / "solved" / "v3" / "fixture_renders"
+    render_dir.mkdir(parents=True, exist_ok=True)
+    rcfg = {"azimuth_deg": 315.0, "altitude_deg": 45.0,
+            "vertical_exaggeration": 1.0,
+            "hypsometric_stops_gu": [
+                [-500, 30, 40, 80], [0, 70, 110, 160], [60, 92, 140, 92],
+                [3000, 190, 180, 120], [6000, 165, 125, 90],
+                [9000, 150, 110, 80], [11000, 225, 225, 232],
+                [14000, 255, 255, 255]]}
     for kind in ("flat_step", "sloped_step", "corner", "staircase",
                  "mountain_to_lowland"):
         ctx = _base_ctx(kind)
@@ -178,7 +200,49 @@ def main() -> int:
                           "slope_weight": 25.0, "cg_tol": 1e-6,
                           "cg_maxiter": 800}}
         field, report = solve_surface(ctx, v3)
+        assembly = report["assembly"]
+        eq = report["equation_counts"]
+
+        if assembly["empty_equation_rows"] != 0:
+            raise AssertionError(
+                f"{kind}: solver assembled "
+                f"{assembly['empty_equation_rows']} empty equation rows"
+            )
+
+        expected_rows = (
+            eq["data"]
+            + eq["laplacian"]
+            + eq["slope"]
+        )
+
+        if assembly["rows"] != expected_rows:
+            raise AssertionError(
+                f"{kind}: equation count mismatch: "
+                f"matrix={assembly['rows']} expected={expected_rows}"
+            )
+
+        if eq["data"] != report["unknowns"]:
+            raise AssertionError(
+                f"{kind}: expected one data equation per unknown"
+            )
+
+        if eq["laplacian"] != report["unknowns"]:
+            raise AssertionError(
+                f"{kind}: expected one Laplacian equation per unknown"
+            )
         all_fails += _check(kind, ctx, field, report)
+
+        # colored hypsometric review render (owner side + solved band)
+        disp = field.copy()
+        owner_rows = ctx["own_view"][: SEAM_ROW + 1]
+        disp[: SEAM_ROW + 1] = owner_rows
+        sh = hillshade(disp, azimuth_deg=rcfg["azimuth_deg"],
+                       altitude_deg=rcfg["altitude_deg"],
+                       z_scale=float(rcfg["vertical_exaggeration"]))
+        rgb = hypsometric_rgb(disp, sh, rcfg["hypsometric_stops_gu"])
+        save_shade_png(rgb, render_dir / f"fixture_{kind}.png", 4,
+                       title=f"fixture: {kind} (owner top / solved band below)")
+
     if all_fails:
         print(f"FAILURE: {len(all_fails)} fixture assertion(s) failed")
         return 1

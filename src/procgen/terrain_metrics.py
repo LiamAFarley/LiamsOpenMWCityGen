@@ -33,16 +33,50 @@ def band_edge_continuity(field: np.ndarray, target: np.ndarray,
 
 def _inward_slope(field: np.ndarray, seam_v: np.ndarray, nx: np.ndarray,
                   ny: np.ndarray, sign: float) -> tuple[np.ndarray, np.ndarray]:
+    """One-raster-edge height delta normal to the seam, in GU.
+
+    This reports GU per adjacent heightmap edge. A LAND cell has 64
+    intervals, but adjacent samples in this array are already one interval
+    apart — do not divide the height difference by 64. For a dimensionless
+    world-space slope, divide by the 128 GU horizontal spacing.
+    """
     H, W = field.shape
+
     ys, xs = np.nonzero(seam_v)
-    uy = ys + sign * np.rint(ny[ys, xs]).astype(np.int64)
-    ux = xs + sign * np.rint(nx[ys, xs]).astype(np.int64)
-    ok = (uy >= 0) & (uy < H) & (ux >= 0) & (ux < W)
-    slope = np.full(ys.shape, np.nan, np.float32)
+
+    uy = (
+        ys
+        + sign
+        * np.rint(ny[ys, xs]).astype(np.int64)
+    )
+    ux = (
+        xs
+        + sign
+        * np.rint(nx[ys, xs]).astype(np.int64)
+    )
+
+    ok = (
+        (uy >= 0)
+        & (uy < H)
+        & (ux >= 0)
+        & (ux < W)
+    )
+
+    delta_gu = np.full(
+        ys.shape,
+        np.nan,
+        dtype=np.float32,
+    )
+
     fy = uy[ok]
     fx = ux[ok]
-    slope[ok] = (field[fy, fx] - field[ys[ok], xs[ok]]) / 64.0
-    return slope, ok
+
+    delta_gu[ok] = (
+        field[fy, fx]
+        - field[ys[ok], xs[ok]]
+    )
+
+    return delta_gu, ok
 
 
 def seam_c1_normals(field: np.ndarray, own_view: np.ndarray,

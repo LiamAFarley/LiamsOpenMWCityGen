@@ -272,154 +272,763 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
 
 
 def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
-    """Assemble and solve the constrained surface (see module docstring).
+    """Solve the v3 constrained seam surface.
 
-    Returns ``(field, report)``. ``report`` carries per-family equation
-    counts, per-family residuals, and the boundary-elimination count.
+    IMPORTANT ASSEMBLY RULE:
+    Matrix ROW indices are equation IDs.
+    Matrix COLUMN indices are unknown-height IDs.
+
+    They are NOT interchangeable.
+
+    Families:
+      data:
+          one equation per unknown
+
+      laplacian:
+          one equation per unknown, containing multiple coefficients
+
+      slope:
+          one equation per valid owner->Tamriel seam derivative constraint
+
+    Hard seam/ring vertices are eliminated from the unknown vector and enter
+    neighboring equations through their RHS values.
     """
     surf = v3.get("surface", {})
-    smask, hard, hard_vals = ctx["smask"], ctx["hard"], ctx["hard_vals"]
-    target = nn_fill(ctx["target"])
+
+    smask = ctx["smask"]
+    hard = ctx["hard"]
+    hard_vals = ctx["hard_vals"]
+    target = nn_fill(ctx["target"]).astype(np.float64)
     own_view = ctx["own_view"]
     edge_list = ctx["edge_list"]
 
-    w_data = float(surf.get("data_weight", 1.0))
+    # Accept the old target_weight key as a fallback while migrating config,
+    # but production config should use data_weight explicitly.
+    w_data = float(
+        surf.get("data_weight", surf.get("target_weight", 1.0))
+    )
     w_smooth = float(surf.get("smooth_weight", 0.05))
     w_slope = float(surf.get("slope_weight", 25.0))
-    w_bound = float(surf.get("boundary_weight", 1.0e6))
+
+    if w_data <= 0.0:
+        raise ValueError("surface.data_weight must be > 0")
+    if w_smooth <= 0.0:
+        raise ValueError("surface.smooth_weight must be > 0")
+    if w_slope <= 0.0:
+        raise ValueError("surface.slope_weight must be > 0")
+
+    # ------------------------------------------------------------------
+    # Unknown indexing
+    # ------------------------------------------------------------------
 
     unk = smask & ~hard
     H, W = smask.shape
+
     idx = np.full((H, W), -1, dtype=np.int64)
-    idx[unk] = np.arange(int(unk.sum()))
     n = int(unk.sum())
 
-    fam: dict[str, list] = {k: [[], [], [], []] for k in
-                            ("data", "laplacian", "slope")}
-    boundary_eliminated = int(hard.sum())
+    if n == 0:
+        out = target.astype(np.float32)
+        out[hard] = hard_vals[hard]
+        out[~smask] = ctx["target"][~smask]
+        return out, {
+            "unknowns": 0,
+            "cg_status": 0,
+            "equation_counts": {
+                "data": 0,
+                "laplacian": 0,
+                "slope": 0,
+                "boundary_eliminated": int(hard.sum()),
+            },
+            "residuals": {
+                "data_rms": 0.0,
+                "data_max": 0.0,
+                "laplacian_rms": 0.0,
+                "laplacian_max": 0.0,
+                "slope_rms": 0.0,
+                "slope_max": 0.0,
+                "data_weighted_rms": 0.0,
+                "laplacian_weighted_rms": 0.0,
+                "slope_weighted_rms": 0.0,
+                "boundary_max": 0.0,
+            },
+            "slope_rows": 0,
+            "assembly": {
+                "rows": 0,
+                "nnz": 0,
+                "empty_equation_rows": 0,
+            },
+        }
 
-    # data family: wd(x) * H(x) = wd(x) * target(x)
-    wd = (0.05 + 0.95 * smootherstep(
-        ctx["dist_seam"] / np.maximum(ctx["width_cells"] * 64.0, 1.0))) * unk
-    ii = idx[unk]
-    fam["data"][0].append(ii)
-    fam["data"][1].append(ii)
-    fam["data"][2].append(w_data * wd[unk])
-    fam["data"][3].append(w_data * wd[unk] * target[unk])
+    idx[unk] = np.arange(n, dtype=np.int64)
 
-    # laplacian family: ws*(4H(x) - sum nb) = ws * sum(fixed nb)
-    acc_fixed = np.zeros(n, np.float64)
-    for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+    # Unknown IDs themselves are 0..n-1.
+    unknown_ids = idx[unk]
+
+    # ==================================================================
+    # FAMILY 1: DATA
+    #
+    # One equation per unknown:
+    #
+    #     w(x) H_i = w(x) target_i
+    #
+    # Local equation IDs are 0..n-1.
+    # ==================================================================
+
+    wd_field = (
+        0.05
+        + 0.95
+        * smootherstep(
+            ctx["dist_seam"]
+            / np.maximum(ctx["width_cells"] * 64.0, 1.0)
+        )
+    )
+
+    data_coeff = (
+        w_data * wd_field[unk].astype(np.float64)
+    )
+
+    data_rows_local = np.arange(n, dtype=np.int64)
+    data_cols = unknown_ids.copy()
+    data_vals = data_coeff
+
+    b_data = (
+        data_coeff
+        * target[unk].astype(np.float64)
+    )
+
+    n_data_eq = n
+
+    # ==================================================================
+    # FAMILY 2: LAPLACIAN
+    #
+    # Exactly ONE equation per unknown:
+    #
+    #   degree_i * H_i - sum(H_unknown_neighbor)
+    #       = sum(H_fixed_neighbor)
+    #
+    # multiplied by w_smooth.
+    #
+    # A Laplacian equation has several NONZEROS but one RHS.
+    # ==================================================================
+
+    lap_row_parts: list[np.ndarray] = []
+    lap_col_parts: list[np.ndarray] = []
+    lap_val_parts: list[np.ndarray] = []
+
+    b_lap = np.zeros(n, dtype=np.float64)
+    lap_degree = np.zeros(n, dtype=np.float64)
+
+    for dy, dx in (
+        (0, 1),
+        (0, -1),
+        (1, 0),
+        (-1, 0),
+    ):
+        # sel identifies unknown centers for which this neighbor lies
+        # inside the array.
         sel = unk.copy()
+
         if dy == 1:
             sel[-1, :] = False
-        if dy == -1:
+        elif dy == -1:
             sel[0, :] = False
+
         if dx == 1:
             sel[:, -1] = False
-        if dx == -1:
+        elif dx == -1:
             sel[:, 0] = False
-        shifted_idx = np.roll(idx, (dy, dx), axis=(0, 1))
-        shifted_hard = np.roll(hard, (dy, dx), axis=(0, 1))
-        shifted_val = np.where(shifted_hard,
-                               np.roll(hard_vals, (dy, dx), axis=(0, 1)), 0.0)
-        rr = idx[sel]
-        jj = shifted_idx[sel]
-        is_unk = jj >= 0
-        fam["laplacian"][0].append(rr[is_unk])
-        fam["laplacian"][1].append(jj[is_unk])
-        fam["laplacian"][2].append(np.full(int(is_unk.sum()), -w_smooth))
-        fam["laplacian"][3].append(np.zeros(int(is_unk.sum())))
-        acc_fixed[rr[~is_unk]] += w_smooth * shifted_val[sel][~is_unk]
-    core = idx[unk]
-    fam["laplacian"][0].append(core)
-    fam["laplacian"][1].append(core)
-    fam["laplacian"][2].append(np.full(core.size, 4.0 * w_smooth))
-    fam["laplacian"][3].append(acc_fixed)
 
-    # slope family: per edge, per seam vert with valid owner sample:
-    #   H(u) - H(s) = 64 * s_own   ->   H(u) = h_s + 64 * s_own
-    slope_r = []
-    slope_b = []
-    slope_meta = []
-    for e in edge_list:
-        ny_v, nx_v = e["normal"]
-        for f in e["verts"]:
-            uy = f // W + int(round(ny_v))
-            ux = f % W + int(round(nx_v))
+        # IMPORTANT:
+        # np.roll(a, -dy) makes a[y] receive original a[y + dy].
+        #
+        # The previous implementation used the opposite shift direction.
+        neighbor_idx = np.roll(
+            idx,
+            shift=(-dy, -dx),
+            axis=(0, 1),
+        )
+        neighbor_hard = np.roll(
+            hard,
+            shift=(-dy, -dx),
+            axis=(0, 1),
+        )
+        neighbor_hard_vals = np.roll(
+            hard_vals,
+            shift=(-dy, -dx),
+            axis=(0, 1),
+        )
+
+        eq_ids = idx[sel]
+        nb_ids = neighbor_idx[sel]
+        nb_is_unknown = nb_ids >= 0
+        nb_is_hard = neighbor_hard[sel]
+
+        # Because the solve corridor has a hard outer ring, every
+        # non-unknown neighbor of an unknown should be hard.
+        #
+        # If this fires, the corridor topology itself is broken and we
+        # should NOT silently treat a missing neighbor as height zero.
+        bad_neighbor = (~nb_is_unknown) & (~nb_is_hard)
+        if np.any(bad_neighbor):
+            bad_count = int(np.count_nonzero(bad_neighbor))
+            raise AssertionError(
+                "Laplacian assembly found "
+                f"{bad_count} unknown->non-hard/non-unknown neighbor(s). "
+                "The solve corridor must be enclosed by hard boundary "
+                "vertices."
+            )
+
+        # Every valid neighboring raster edge contributes to degree.
+        np.add.at(
+            lap_degree,
+            eq_ids,
+            1.0,
+        )
+
+        # Unknown neighbor:
+        #
+        #     ... - w_smooth * H_j
+        #
+        if np.any(nb_is_unknown):
+            lap_row_parts.append(
+                eq_ids[nb_is_unknown].astype(np.int64)
+            )
+            lap_col_parts.append(
+                nb_ids[nb_is_unknown].astype(np.int64)
+            )
+            lap_val_parts.append(
+                np.full(
+                    int(np.count_nonzero(nb_is_unknown)),
+                    -w_smooth,
+                    dtype=np.float64,
+                )
+            )
+
+        # Hard neighbor:
+        #
+        #     ... = + w_smooth * H_fixed
+        #
+        if np.any(nb_is_hard):
+            fixed_eq = eq_ids[nb_is_hard]
+            fixed_val = neighbor_hard_vals[sel][nb_is_hard]
+
+            np.add.at(
+                b_lap,
+                fixed_eq,
+                w_smooth * fixed_val.astype(np.float64),
+            )
+
+    # Diagonal:
+    #
+    #     degree_i * w_smooth * H_i
+    #
+    lap_row_parts.append(
+        np.arange(n, dtype=np.int64)
+    )
+    lap_col_parts.append(
+        np.arange(n, dtype=np.int64)
+    )
+    lap_val_parts.append(
+        w_smooth * lap_degree
+    )
+
+    lap_rows_local = np.concatenate(lap_row_parts)
+    lap_cols = np.concatenate(lap_col_parts)
+    lap_vals = np.concatenate(lap_val_parts)
+
+    n_lap_eq = n
+
+    # ==================================================================
+    # FAMILY 3: OWNER NORMAL-SLOPE CONTINUATION
+    #
+    # One equation for each valid seam edge sample:
+    #
+    #     H_inland = H_seam + (H_seam - H_owner_outward)
+    #
+    # This is exactly a one-vertex continuation of the owner's normal
+    # derivative.
+    #
+    # DO NOT divide by 64 and then multiply by 64. Adjacent samples are
+    # one raster edge apart.
+    # ==================================================================
+
+    slope_cols_list: list[int] = []
+    slope_desired_list: list[float] = []
+    slope_seam_meta: list[int] = []
+
+    hard_flat = hard_vals.ravel()
+
+    for edge in edge_list:
+        normal_y, normal_x = edge["normal"]
+
+        dy = int(round(normal_y))
+        dx = int(round(normal_x))
+
+        for seam_flat in edge["verts"]:
+            sy = seam_flat // W
+            sx = seam_flat % W
+
+            # One vertex inward, on generated/Tamriel side.
+            uy = sy + dy
+            ux = sx + dx
+
             if not (0 <= uy < H and 0 <= ux < W):
                 continue
-            ju = idx[uy, ux]
-            if ju < 0:
+
+            inland_unknown = idx[uy, ux]
+
+            # If the immediately-inland point is itself hard/ring/seam,
+            # there is no unknown to constrain.
+            if inland_unknown < 0:
                 continue
-            oy = f // W - int(round(ny_v))
-            ox = f % W - int(round(nx_v))
+
+            # One vertex outward, on owner side.
+            oy = sy - dy
+            ox = sx - dx
+
             if not (0 <= oy < H and 0 <= ox < W):
                 continue
-            h_s = hard_vals.ravel()[f]
-            h_o = own_view[oy, ox]
-            if not np.isfinite(h_o):
+
+            h_owner_out = float(own_view[oy, ox])
+
+            if not np.isfinite(h_owner_out):
                 continue
-            s_own = (h_s - float(h_o)) / 64.0
-            slope_r.append(ju)
-            slope_b.append(w_slope * (h_s + 64.0 * s_own))
-            slope_meta.append(f)
-    fam["slope"][0].append(np.asarray(slope_r, dtype=np.int64))
-    fam["slope"][1].append(np.asarray(slope_r, dtype=np.int64))
-    fam["slope"][2].append(np.full(len(slope_r), w_slope, dtype=np.float64))
-    fam["slope"][3].append(np.asarray(slope_b, dtype=np.float64))
 
-    rows = np.concatenate([np.concatenate(f[0]) for f in fam.values()])
-    cols = np.concatenate([np.concatenate(f[1]) for f in fam.values()])
-    vals = np.concatenate([np.concatenate(f[2]) for f in fam.values()])
-    b_vec = np.concatenate([np.concatenate(f[3]) for f in fam.values()])
-    n_rows = rows.size
-    A = sparse.coo_matrix((vals, (rows, cols)), shape=(n_rows, n)).tocsr()
+            h_seam = float(hard_flat[seam_flat])
 
-    counts = {k: int(sum(len(x) for x in fam[k][0])) for k in fam}
-    counts["boundary_eliminated"] = boundary_eliminated
+            if not np.isfinite(h_seam):
+                continue
+
+            # Continue the one-edge owner derivative through the seam:
+            #
+            # owner_out -> seam = (h_seam - h_owner_out)
+            #
+            # so:
+            #
+            # seam -> inland should initially have the same delta.
+            desired_inland = (
+                h_seam
+                + (h_seam - h_owner_out)
+            )
+
+            slope_cols_list.append(
+                int(inland_unknown)
+            )
+            slope_desired_list.append(
+                float(desired_inland)
+            )
+            slope_seam_meta.append(
+                int(seam_flat)
+            )
+
+    slope_cols = np.asarray(
+        slope_cols_list,
+        dtype=np.int64,
+    )
+    slope_desired = np.asarray(
+        slope_desired_list,
+        dtype=np.float64,
+    )
+
+    n_slope_eq = int(slope_cols.size)
+
+    # Local slope equation IDs are 0..m-1.
+    slope_rows_local = np.arange(
+        n_slope_eq,
+        dtype=np.int64,
+    )
+
+    slope_vals = np.full(
+        n_slope_eq,
+        w_slope,
+        dtype=np.float64,
+    )
+
+    b_slope = (
+        w_slope * slope_desired
+    )
+
+    # ==================================================================
+    # GLOBAL EQUATION-ROW OFFSETS
+    #
+    # THIS IS THE PART THE OLD ASSEMBLER WAS MISSING.
+    #
+    # data rows:
+    #       [0, n)
+    #
+    # laplacian rows:
+    #       [n, 2n)
+    #
+    # slope rows:
+    #       [2n, 2n+m)
+    #
+    # Columns ALWAYS remain unknown IDs [0, n).
+    # ==================================================================
+
+    data_offset = 0
+    lap_offset = n_data_eq
+    slope_offset = n_data_eq + n_lap_eq
+
+    data_rows = (
+        data_rows_local + data_offset
+    )
+    lap_rows = (
+        lap_rows_local + lap_offset
+    )
+    slope_rows = (
+        slope_rows_local + slope_offset
+    )
+
+    n_rows = (
+        n_data_eq
+        + n_lap_eq
+        + n_slope_eq
+    )
+
+    rows = np.concatenate(
+        [
+            data_rows,
+            lap_rows,
+            slope_rows,
+        ]
+    )
+
+    cols = np.concatenate(
+        [
+            data_cols,
+            lap_cols,
+            slope_cols,
+        ]
+    )
+
+    vals = np.concatenate(
+        [
+            data_vals,
+            lap_vals,
+            slope_vals,
+        ]
+    )
+
+    # ONE RHS value per EQUATION, not per matrix nonzero.
+    b_vec = np.concatenate(
+        [
+            b_data,
+            b_lap,
+            b_slope,
+        ]
+    )
+
+    # ==================================================================
+    # HARD ASSEMBLY INVARIANTS
+    # ==================================================================
+
+    if not (
+        rows.size
+        == cols.size
+        == vals.size
+    ):
+        raise AssertionError(
+            "Sparse COO arrays have inconsistent lengths: "
+            f"rows={rows.size}, cols={cols.size}, vals={vals.size}"
+        )
+
+    if b_vec.size != n_rows:
+        raise AssertionError(
+            "RHS length must equal number of EQUATIONS: "
+            f"len(b)={b_vec.size}, n_rows={n_rows}"
+        )
+
+    if rows.size:
+        if int(rows.min()) < 0:
+            raise AssertionError(
+                f"negative equation row index {int(rows.min())}"
+            )
+        if int(rows.max()) >= n_rows:
+            raise AssertionError(
+                "equation row index outside matrix: "
+                f"max={int(rows.max())}, n_rows={n_rows}"
+            )
+
+    if cols.size:
+        if int(cols.min()) < 0:
+            raise AssertionError(
+                f"negative unknown column index {int(cols.min())}"
+            )
+        if int(cols.max()) >= n:
+            raise AssertionError(
+                "unknown column index outside matrix: "
+                f"max={int(cols.max())}, n={n}"
+            )
+
+    A = sparse.coo_matrix(
+        (vals, (rows, cols)),
+        shape=(n_rows, n),
+        dtype=np.float64,
+    ).tocsr()
+
+    # Every equation in this implementation must contain at least one
+    # coefficient. The old broken assembler produced huge numbers of
+    # EMPTY equation rows; this catches that exact failure.
+    row_nnz = np.diff(A.indptr)
+    empty_rows = int(np.count_nonzero(row_nnz == 0))
+
+    if empty_rows != 0:
+        empty_idx = np.nonzero(row_nnz == 0)[0][:20]
+        raise AssertionError(
+            "Sparse system contains empty equation rows. "
+            f"count={empty_rows}, first={empty_idx.tolist()}"
+        )
+
+    # Explicit equation slices. Do NOT infer them from nnz counts.
+    data_slice = slice(
+        data_offset,
+        data_offset + n_data_eq,
+    )
+    lap_slice = slice(
+        lap_offset,
+        lap_offset + n_lap_eq,
+    )
+    slope_slice = slice(
+        slope_offset,
+        slope_offset + n_slope_eq,
+    )
+
+    # ==================================================================
+    # NORMAL EQUATIONS
+    # ==================================================================
 
     AtA = (A.T @ A).tocsr()
     Atb = A.T @ b_vec
-    slope_cols = np.asarray(slope_r, dtype=np.int64)
-    print(f"  [debug] slope_rows={len(slope_cols)} "
-          f"b_vec[-len:]={b_vec[-len(slope_cols):].tolist()[:3] if len(slope_cols) else []} "
-          f"Atb_max={float(Atb.max()):.0f} "
-          f"Atb_slope={Atb[slope_cols[:3]].tolist() if len(slope_cols) else []} "
-          f"AtA_diag_slope={AtA[slope_cols[:3], slope_cols[:3]].tolist() if len(slope_cols) else []}")
-    diag = AtA.diagonal()
-    M = sparse.diags(1.0 / np.maximum(diag, 1e-9))
-    x0 = target[unk].astype(np.float64)
-    x, status = cg(AtA, Atb, x0=x0, M=M,
-                   rtol=float(surf.get("cg_tol", 1e-5)),
-                   maxiter=int(surf.get("cg_maxiter", 600)))
 
-    out = target.copy()
-    flat = out.ravel()
-    flat[np.nonzero(unk.ravel())[0]] = x.astype(np.float32)
-    out = flat.reshape(out.shape)
+    # Diagnostic specifically for the historical failure.
+    #
+    # For flat_step:
+    #
+    # coefficient = 25
+    # b = 250000
+    #
+    # so each unique slope equation should contribute about 6.25e6 to
+    # its unknown before other families are added.
+    if n_slope_eq:
+        A_slope = A[slope_slice, :]
+        b_slope_check = b_vec[slope_slice]
+
+        Atb_slope_only = (
+            A_slope.T @ b_slope_check
+        )
+
+        sample_cols = slope_cols[:3]
+
+        print(
+            "  [assembly] "
+            f"unknowns={n} "
+            f"eqs={n_rows} "
+            f"nnz={A.nnz} "
+            f"empty_rows={empty_rows}"
+        )
+
+        print(
+            "  [assembly] "
+            f"data_eq={n_data_eq} "
+            f"lap_eq={n_lap_eq} "
+            f"slope_eq={n_slope_eq}"
+        )
+
+        print(
+            "  [assembly] "
+            f"slope_rhs_sample="
+            f"{b_slope_check[:3].tolist()} "
+            f"slope_Atb_only_sample="
+            f"{Atb_slope_only[sample_cols].tolist()} "
+            f"total_Atb_sample="
+            f"{Atb[sample_cols].tolist()}"
+        )
+
+    # ==================================================================
+    # SOLVE
+    # ==================================================================
+
+    diag = AtA.diagonal()
+
+    if np.any(~np.isfinite(diag)):
+        raise FloatingPointError(
+            "non-finite AtA diagonal"
+        )
+
+    if np.any(diag <= 0.0):
+        bad = np.nonzero(diag <= 0.0)[0][:20]
+        raise AssertionError(
+            "normal matrix has non-positive diagonal entries at "
+            f"{bad.tolist()}"
+        )
+
+    M = sparse.diags(
+        1.0 / diag
+    )
+
+    x0 = target[unk].astype(np.float64)
+
+    x, status = cg(
+        AtA,
+        Atb,
+        x0=x0,
+        M=M,
+        rtol=float(surf.get("cg_tol", 1e-6)),
+        maxiter=int(surf.get("cg_maxiter", 800)),
+    )
+
+    if not np.all(np.isfinite(x)):
+        raise FloatingPointError(
+            "CG returned non-finite terrain values"
+        )
+
+    # ==================================================================
+    # RECONSTRUCT FIELD
+    # ==================================================================
+
+    out = target.astype(np.float32)
+
+    out_flat = out.ravel()
+    unk_flat = np.nonzero(unk.ravel())[0]
+
+    out_flat[unk_flat] = x.astype(np.float32)
+
+    out = out_flat.reshape(out.shape)
+
+    # Exact hard projection AFTER solve.
     out[hard] = hard_vals[hard]
+
+    # Everything outside the solve corridor is exactly the scaled target.
     out[~smask] = ctx["target"][~smask]
 
-    # per-family residuals
-    residuals = {}
-    pos = 0
-    slices = {}
-    for k in ("data", "laplacian", "slope"):
-        cnt = counts[k]
-        slices[k] = slice(pos, pos + cnt)
-        pos += cnt
-    for k, sl in slices.items():
-        if cnt == 0:
-            residuals[k + "_rms"] = 0.0
-            residuals[k + "_max"] = 0.0
-            continue
-        r = A[sl, :] @ x - b_vec[sl]
-        residuals[k + "_rms"] = round(float(np.sqrt(np.mean(r ** 2))), 4)
-        residuals[k + "_max"] = round(float(np.abs(r).max()), 4)
-    residuals["boundary_max"] = 0.0
+    # ==================================================================
+    # RESIDUAL DIAGNOSTICS
+    # ==================================================================
 
-    report = {"unknowns": n, "cg_status": int(status),
-              "equation_counts": counts, "residuals": residuals,
-              "slope_rows": counts["slope"]}
+    def weighted_stats(sl: slice) -> tuple[float, float]:
+        if sl.stop <= sl.start:
+            return 0.0, 0.0
+
+        r = (
+            A[sl, :] @ x
+            - b_vec[sl]
+        )
+
+        return (
+            float(np.sqrt(np.mean(r * r))),
+            float(np.max(np.abs(r))),
+        )
+
+    data_wrms, data_wmax = weighted_stats(
+        data_slice
+    )
+    lap_wrms, lap_wmax = weighted_stats(
+        lap_slice
+    )
+    slope_wrms, slope_wmax = weighted_stats(
+        slope_slice
+    )
+
+    # Report physically interpretable GU residuals separately from
+    # WEIGHTED least-squares residuals.
+    #
+    # Data error in GU.
+    data_error_gu = (
+        x
+        - target[unk].astype(np.float64)
+    )
+
+    data_rms_gu = float(
+        np.sqrt(np.mean(data_error_gu ** 2))
+    )
+    data_max_gu = float(
+        np.max(np.abs(data_error_gu))
+    )
+
+    # Laplacian residual is GU when divided by its scalar weight.
+    lap_rms_gu = (
+        lap_wrms / w_smooth
+        if w_smooth > 0.0
+        else 0.0
+    )
+    lap_max_gu = (
+        lap_wmax / w_smooth
+        if w_smooth > 0.0
+        else 0.0
+    )
+
+    # THIS is the slope residual the quality gate should use.
+    #
+    # It is direct height error in GU, not 25x weighted equation error.
+    if n_slope_eq:
+        slope_error_gu = (
+            x[slope_cols]
+            - slope_desired
+        )
+
+        slope_rms_gu = float(
+            np.sqrt(
+                np.mean(
+                    slope_error_gu ** 2
+                )
+            )
+        )
+
+        slope_max_gu = float(
+            np.max(
+                np.abs(
+                    slope_error_gu
+                )
+            )
+        )
+    else:
+        slope_rms_gu = 0.0
+        slope_max_gu = 0.0
+
+    counts = {
+        "data": int(n_data_eq),
+        "laplacian": int(n_lap_eq),
+        "slope": int(n_slope_eq),
+        "boundary_eliminated": int(hard.sum()),
+    }
+
+    residuals = {
+        # Physical / interpretable values
+        "data_rms": round(data_rms_gu, 4),
+        "data_max": round(data_max_gu, 4),
+
+        "laplacian_rms": round(lap_rms_gu, 4),
+        "laplacian_max": round(lap_max_gu, 4),
+
+        "slope_rms": round(slope_rms_gu, 4),
+        "slope_max": round(slope_max_gu, 4),
+
+        # Weighted objective-space values
+        "data_weighted_rms": round(data_wrms, 4),
+        "data_weighted_max": round(data_wmax, 4),
+
+        "laplacian_weighted_rms": round(lap_wrms, 4),
+        "laplacian_weighted_max": round(lap_wmax, 4),
+
+        "slope_weighted_rms": round(slope_wrms, 4),
+        "slope_weighted_max": round(slope_wmax, 4),
+
+        "boundary_max": 0.0,
+    }
+
+    report = {
+        "unknowns": n,
+        "cg_status": int(status),
+        "equation_counts": counts,
+        "residuals": residuals,
+        "slope_rows": int(n_slope_eq),
+
+        "assembly": {
+            "rows": int(n_rows),
+            "nnz": int(A.nnz),
+            "empty_equation_rows": int(empty_rows),
+        },
+    }
+
     return out, report
