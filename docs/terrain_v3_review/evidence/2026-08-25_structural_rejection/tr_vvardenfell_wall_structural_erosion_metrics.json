@@ -1,0 +1,753 @@
+{
+  "region": "tr_vvardenfell_wall",
+  "features": {
+    "owner_vertices": 7312449,
+    "ridge_vertices": 390307,
+    "valley_vertices": 479002,
+    "plateau_vertices": 323859,
+    "scarp_vertices": 235358,
+    "underwater_vertices": 1746776,
+    "shoreline_vertices": 60737,
+    "coastal_vertices": 2505744
+  },
+  "structure": {
+    "guides": {
+      "feature_seed_counts": {
+        "ridge": 79,
+        "valley": 29,
+        "plateau": 4,
+        "scarp": 7
+      },
+      "guide_support_vertices": 103,
+      "guide_source_points": 103,
+      "guide_vertices": 257726,
+      "guide_weight_max": 1.9258625507354736
+    },
+    "solve": {
+      "unknowns": 2536312,
+      "guide_rows": 259019,
+      "guide_weight_max": 1.9258625507354736,
+      "linear_solver": "amg_rs_cg",
+      "cg_iterations": 5,
+      "solver_setup_s": 1.4767,
+      "solver_solve_s": 1.0472,
+      "residual_rms": 1.5250344582792968e-05,
+      "correction_min": -2249.9813757737547,
+      "correction_max": 1137.0331399603047,
+      "amg_levels": 8
+    }
+  },
+  "erosion": {
+    "cycles": 24,
+    "reroute_every": 2,
+    "generated_vertices": 2551237,
+    "editable_vertices": 2536312,
+    "owner_vertices": 7312449,
+    "owner_inflow": {
+      "owner_vertices": 7312449,
+      "generated_crossing_vertices": 1922,
+      "owner_inflow_total": 18267.46493334743,
+      "owner_routed_vertices": 5240923
+    },
+    "routing_rebuilds": 12,
+    "routing_reports": [
+      {
+        "cycle": 1,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 193384,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 3,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 194604,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 5,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 192787,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 7,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 191730,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 9,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 194042,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 11,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 190616,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 13,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 191107,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 15,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 190817,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 17,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 194336,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 19,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 193610,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 21,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 190243,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      },
+      {
+        "cycle": 23,
+        "routing_domain_vertices": 9863686,
+        "generated_vertices": 2551237,
+        "routing_defects": 191042,
+        "perturbation_sigma_verts": 4.0,
+        "perturbation_max_gu": 6.0
+      }
+    ],
+    "kdt_calibration": {
+      "area_reference_vertices": 256.0,
+      "channel_candidates": 24596,
+      "q_median": 0.000875815050676465,
+      "q_p75": 0.0012682103551924229,
+      "q_p90": 0.0018468000926077366,
+      "q_p95": 0.0023241767194122076,
+      "q_max": 0.00965431984513998,
+      "target_c_p90": 0.25,
+      "chosen_kdt": 135.36928062798208
+    },
+    "c_distribution_final": {
+      "median": 3.875995389535092e-05,
+      "p75": 0.0010141668608412147,
+      "p90": 0.006390387658029795,
+      "p95": 0.011915034614503384,
+      "p99": 0.05511406064033508,
+      "max": 0.7160935997962952
+    },
+    "cycle_reports": {
+      "1": {
+        "active_channel_vertices": 1886885,
+        "c_distribution": {
+          "median": 2.6617028197506443e-05,
+          "p75": 0.0006726913852617145,
+          "p90": 0.0054250676184892654,
+          "p95": 0.014064409770071507,
+          "p99": 0.07084382325410843,
+          "max": 0.8362847566604614
+        },
+        "incision_gu": {
+          "median": 0.0009543198393657804,
+          "p75": 0.02743135392665863,
+          "p90": 0.25512391328811646,
+          "p95": 0.6764965653419495,
+          "p99": 3.1933884620666504,
+          "max": 41.18498611450195
+        },
+        "hillslope_max_positive_gu": 18.432373046875
+      },
+      "2": {
+        "active_channel_vertices": 1886873,
+        "c_distribution": {
+          "median": 2.6616800823831e-05,
+          "p75": 0.0006726682186126709,
+          "p90": 0.00542489904910326,
+          "p95": 0.0140640614554286,
+          "p99": 0.07083636522293091,
+          "max": 0.8362847566604614
+        },
+        "incision_gu": {
+          "median": 0.0009543290943838656,
+          "p75": 0.027434544637799263,
+          "p90": 0.25551673769950867,
+          "p95": 0.6786581873893738,
+          "p99": 3.202538251876831,
+          "max": 38.82861328125
+        },
+        "hillslope_max_positive_gu": 18.142333984375
+      },
+      "3": {
+        "active_channel_vertices": 1875603,
+        "c_distribution": {
+          "median": 2.7169226086698472e-05,
+          "p75": 0.0007227232563309371,
+          "p90": 0.00558988144621253,
+          "p95": 0.013848411850631237,
+          "p99": 0.06948430836200714,
+          "max": 0.8697881102561951
+        },
+        "incision_gu": {
+          "median": 0.0009727258002385497,
+          "p75": 0.029262099415063858,
+          "p90": 0.26123881340026855,
+          "p95": 0.6754508018493652,
+          "p99": 3.1549243927001953,
+          "max": 37.17338180541992
+        },
+        "hillslope_max_positive_gu": 17.858154296875
+      },
+      "4": {
+        "active_channel_vertices": 1875586,
+        "c_distribution": {
+          "median": 2.7167949156137183e-05,
+          "p75": 0.000722690427210182,
+          "p90": 0.005589375738054514,
+          "p95": 0.013847080990672112,
+          "p99": 0.06948216259479523,
+          "max": 0.8697881102561951
+        },
+        "incision_gu": {
+          "median": 0.0009727533324621618,
+          "p75": 0.0292679313570261,
+          "p90": 0.2616736888885498,
+          "p95": 0.6771950721740723,
+          "p99": 3.164088487625122,
+          "max": 36.18442916870117
+        },
+        "hillslope_max_positive_gu": 17.57958984375
+      },
+      "5": {
+        "active_channel_vertices": 1897185,
+        "c_distribution": {
+          "median": 2.9129747417755425e-05,
+          "p75": 0.0007698567933402956,
+          "p90": 0.005951438099145889,
+          "p95": 0.014308908954262733,
+          "p99": 0.06833983957767487,
+          "max": 0.8544548153877258
+        },
+        "incision_gu": {
+          "median": 0.0010509047424420714,
+          "p75": 0.031103871762752533,
+          "p90": 0.2800689935684204,
+          "p95": 0.7080639004707336,
+          "p99": 3.126965045928955,
+          "max": 37.990203857421875
+        },
+        "hillslope_max_positive_gu": 17.306640625
+      },
+      "6": {
+        "active_channel_vertices": 1897166,
+        "c_distribution": {
+          "median": 2.912831405410543e-05,
+          "p75": 0.0007698009721934795,
+          "p90": 0.005951001308858395,
+          "p95": 0.014308392070233822,
+          "p99": 0.06833048164844513,
+          "max": 0.8544548153877258
+        },
+        "incision_gu": {
+          "median": 0.0010510513093322515,
+          "p75": 0.031110012903809547,
+          "p90": 0.28062567114830017,
+          "p95": 0.7105809450149536,
+          "p99": 3.1402926445007324,
+          "max": 36.00986099243164
+        },
+        "hillslope_max_positive_gu": 17.0390625
+      },
+      "7": {
+        "active_channel_vertices": 1887401,
+        "c_distribution": {
+          "median": 3.059865775867365e-05,
+          "p75": 0.0008080276311375201,
+          "p90": 0.0061399489641189575,
+          "p95": 0.014044752344489098,
+          "p99": 0.06579437851905823,
+          "max": 0.7926251888275146
+        },
+        "incision_gu": {
+          "median": 0.0010960589861497283,
+          "p75": 0.032805658876895905,
+          "p90": 0.28805404901504517,
+          "p95": 0.7074908018112183,
+          "p99": 3.011296272277832,
+          "max": 41.641998291015625
+        },
+        "hillslope_max_positive_gu": 16.77685546875
+      },
+      "8": {
+        "active_channel_vertices": 1887381,
+        "c_distribution": {
+          "median": 3.0598217563237995e-05,
+          "p75": 0.000807999458629638,
+          "p90": 0.0061394996009767056,
+          "p95": 0.0140443816781044,
+          "p99": 0.06579378992319107,
+          "max": 0.7926251888275146
+        },
+        "incision_gu": {
+          "median": 0.0010960256913676858,
+          "p75": 0.03281977027654648,
+          "p90": 0.28863173723220825,
+          "p95": 0.7098584771156311,
+          "p99": 3.02801775932312,
+          "max": 40.36229705810547
+        },
+        "hillslope_max_positive_gu": 16.52001953125
+      },
+      "9": {
+        "active_channel_vertices": 1887685,
+        "c_distribution": {
+          "median": 2.9308657758519985e-05,
+          "p75": 0.0008167090127244592,
+          "p90": 0.006095181219279766,
+          "p95": 0.013577700592577457,
+          "p99": 0.06245233863592148,
+          "max": 0.7416396141052246
+        },
+        "incision_gu": {
+          "median": 0.0010505995014682412,
+          "p75": 0.03287440538406372,
+          "p90": 0.287983238697052,
+          "p95": 0.7015017867088318,
+          "p99": 2.867563247680664,
+          "max": 37.56385803222656
+        },
+        "hillslope_max_positive_gu": 16.26806640625
+      },
+      "10": {
+        "active_channel_vertices": 1887662,
+        "c_distribution": {
+          "median": 2.930735718109645e-05,
+          "p75": 0.0008166779298335314,
+          "p90": 0.006094911601394415,
+          "p95": 0.013576723635196686,
+          "p99": 0.06244923919439316,
+          "max": 0.7416396141052246
+        },
+        "incision_gu": {
+          "median": 0.0010506118414923549,
+          "p75": 0.032881930470466614,
+          "p90": 0.2886659502983093,
+          "p95": 0.704353928565979,
+          "p99": 2.884444236755371,
+          "max": 36.53227615356445
+        },
+        "hillslope_max_positive_gu": 16.021240234375
+      },
+      "11": {
+        "active_channel_vertices": 1894151,
+        "c_distribution": {
+          "median": 3.197465048287995e-05,
+          "p75": 0.0008428880828432739,
+          "p90": 0.0062414794228971004,
+          "p95": 0.013351701200008392,
+          "p99": 0.06044800207018852,
+          "max": 0.897906482219696
+        },
+        "incision_gu": {
+          "median": 0.0011424139374867082,
+          "p75": 0.03381814807653427,
+          "p90": 0.2936912775039673,
+          "p95": 0.701142430305481,
+          "p99": 2.7877986431121826,
+          "max": 38.88832473754883
+        },
+        "hillslope_max_positive_gu": 15.779296875
+      },
+      "12": {
+        "active_channel_vertices": 1894140,
+        "c_distribution": {
+          "median": 3.1974457670003176e-05,
+          "p75": 0.00084286107448861,
+          "p90": 0.006241322960704565,
+          "p95": 0.013351378031075,
+          "p99": 0.06044505909085274,
+          "max": 0.897906482219696
+        },
+        "incision_gu": {
+          "median": 0.001142570050433278,
+          "p75": 0.03382980450987816,
+          "p90": 0.294412225484848,
+          "p95": 0.7040966749191284,
+          "p99": 2.802720546722412,
+          "max": 37.72649002075195
+        },
+        "hillslope_max_positive_gu": 15.5419921875
+      },
+      "13": {
+        "active_channel_vertices": 1891576,
+        "c_distribution": {
+          "median": 3.301213291706517e-05,
+          "p75": 0.0008649618830531836,
+          "p90": 0.006258012726902962,
+          "p95": 0.013048225082457066,
+          "p99": 0.05912361294031143,
+          "max": 0.7853665947914124
+        },
+        "incision_gu": {
+          "median": 0.0011707349913194776,
+          "p75": 0.03472907468676567,
+          "p90": 0.2954610586166382,
+          "p95": 0.6988897323608398,
+          "p99": 2.705986976623535,
+          "max": 36.5506706237793
+        },
+        "hillslope_max_positive_gu": 15.309326171875
+      },
+      "14": {
+        "active_channel_vertices": 1891563,
+        "c_distribution": {
+          "median": 3.301144533907063e-05,
+          "p75": 0.00086493807611987,
+          "p90": 0.006257536821067333,
+          "p95": 0.013047454878687859,
+          "p99": 0.059116482734680176,
+          "max": 0.7853665947914124
+        },
+        "incision_gu": {
+          "median": 0.0011707735247910023,
+          "p75": 0.03473620489239693,
+          "p90": 0.29607149958610535,
+          "p95": 0.7024877667427063,
+          "p99": 2.7224788665771484,
+          "max": 35.86561965942383
+        },
+        "hillslope_max_positive_gu": 15.08154296875
+      },
+      "15": {
+        "active_channel_vertices": 1896277,
+        "c_distribution": {
+          "median": 3.387752440175973e-05,
+          "p75": 0.0008925435831770301,
+          "p90": 0.006337766535580158,
+          "p95": 0.012774168513715267,
+          "p99": 0.05845244228839874,
+          "max": 0.7012813091278076
+        },
+        "incision_gu": {
+          "median": 0.0011945957085117698,
+          "p75": 0.03614456206560135,
+          "p90": 0.3024088740348816,
+          "p95": 0.6998816132545471,
+          "p99": 2.6451780796051025,
+          "max": 35.92597579956055
+        },
+        "hillslope_max_positive_gu": 14.85791015625
+      },
+      "16": {
+        "active_channel_vertices": 1896265,
+        "c_distribution": {
+          "median": 3.3876352972583845e-05,
+          "p75": 0.000892528856638819,
+          "p90": 0.006337687838822603,
+          "p95": 0.012774134054780006,
+          "p99": 0.058451250195503235,
+          "max": 0.7012813091278076
+        },
+        "incision_gu": {
+          "median": 0.0011943933786824346,
+          "p75": 0.036149971187114716,
+          "p90": 0.3030898869037628,
+          "p95": 0.7032901644706726,
+          "p99": 2.6636078357696533,
+          "max": 34.895145416259766
+        },
+        "hillslope_max_positive_gu": 14.638671875
+      },
+      "17": {
+        "active_channel_vertices": 1896747,
+        "c_distribution": {
+          "median": 3.584226578823291e-05,
+          "p75": 0.0009296172647736967,
+          "p90": 0.0064012641087174416,
+          "p95": 0.012598744593560696,
+          "p99": 0.057284463196992874,
+          "max": 0.7248674035072327
+        },
+        "incision_gu": {
+          "median": 0.0012650727294385433,
+          "p75": 0.03743857890367508,
+          "p90": 0.3051946461200714,
+          "p95": 0.6984947919845581,
+          "p99": 2.600961685180664,
+          "max": 33.0271110534668
+        },
+        "hillslope_max_positive_gu": 14.423828125
+      },
+      "18": {
+        "active_channel_vertices": 1896735,
+        "c_distribution": {
+          "median": 3.5841832868754864e-05,
+          "p75": 0.0009295792551711202,
+          "p90": 0.0064010536298155785,
+          "p95": 0.012598395347595215,
+          "p99": 0.05728485807776451,
+          "max": 0.7248674035072327
+        },
+        "incision_gu": {
+          "median": 0.001265150960534811,
+          "p75": 0.037449244409799576,
+          "p90": 0.3058777451515198,
+          "p95": 0.7018382549285889,
+          "p99": 2.6215314865112305,
+          "max": 31.957002639770508
+        },
+        "hillslope_max_positive_gu": 14.213134765625
+      },
+      "19": {
+        "active_channel_vertices": 1884883,
+        "c_distribution": {
+          "median": 3.6503359297057614e-05,
+          "p75": 0.0009631870198063552,
+          "p90": 0.006382164545357227,
+          "p95": 0.012332030571997166,
+          "p99": 0.05643603950738907,
+          "max": 0.7176111936569214
+        },
+        "incision_gu": {
+          "median": 0.0012971879914402962,
+          "p75": 0.0386221744120121,
+          "p90": 0.30682581663131714,
+          "p95": 0.6910387873649597,
+          "p99": 2.570042610168457,
+          "max": 31.8320255279541
+        },
+        "hillslope_max_positive_gu": 14.006591796875
+      },
+      "20": {
+        "active_channel_vertices": 1884873,
+        "c_distribution": {
+          "median": 3.65029409294948e-05,
+          "p75": 0.0009631719440221786,
+          "p90": 0.006381964311003685,
+          "p95": 0.012331921607255936,
+          "p99": 0.05643104761838913,
+          "max": 0.7176111936569214
+        },
+        "incision_gu": {
+          "median": 0.001296896138228476,
+          "p75": 0.03863098472356796,
+          "p90": 0.3074750602245331,
+          "p95": 0.6944712400436401,
+          "p99": 2.5906107425689697,
+          "max": 31.130651473999023
+        },
+        "hillslope_max_positive_gu": 13.803955078125
+      },
+      "21": {
+        "active_channel_vertices": 1894700,
+        "c_distribution": {
+          "median": 3.88305306842085e-05,
+          "p75": 0.0009825493907555938,
+          "p90": 0.0063413213938474655,
+          "p95": 0.012069335207343102,
+          "p99": 0.05516839772462845,
+          "max": 0.743534505367279
+        },
+        "incision_gu": {
+          "median": 0.0013811415992677212,
+          "p75": 0.039241157472133636,
+          "p90": 0.30913740396499634,
+          "p95": 0.6885538697242737,
+          "p99": 2.543593168258667,
+          "max": 31.413330078125
+        },
+        "hillslope_max_positive_gu": 13.605224609375
+      },
+      "22": {
+        "active_channel_vertices": 1894692,
+        "c_distribution": {
+          "median": 3.882923556375317e-05,
+          "p75": 0.0009825299493968487,
+          "p90": 0.006341284140944481,
+          "p95": 0.012069093063473701,
+          "p99": 0.055154476314783096,
+          "max": 0.743534505367279
+        },
+        "incision_gu": {
+          "median": 0.0013809115625917912,
+          "p75": 0.03924957290291786,
+          "p90": 0.3098284900188446,
+          "p95": 0.6914010643959045,
+          "p99": 2.5641250610351562,
+          "max": 30.56463050842285
+        },
+        "hillslope_max_positive_gu": 13.410400390625
+      },
+      "23": {
+        "active_channel_vertices": 1910163,
+        "c_distribution": {
+          "median": 3.876061600749381e-05,
+          "p75": 0.0010142099345102906,
+          "p90": 0.006390532478690147,
+          "p95": 0.011915067210793495,
+          "p99": 0.05511471629142761,
+          "max": 0.7160935997962952
+        },
+        "incision_gu": {
+          "median": 0.0013765322510153055,
+          "p75": 0.040867604315280914,
+          "p90": 0.3137287199497223,
+          "p95": 0.6892764568328857,
+          "p99": 2.540104627609253,
+          "max": 31.47161102294922
+        },
+        "hillslope_max_positive_gu": 13.21923828125
+      },
+      "24": {
+        "active_channel_vertices": 1910153,
+        "c_distribution": {
+          "median": 3.875995389535092e-05,
+          "p75": 0.0010141668608412147,
+          "p90": 0.006390387658029795,
+          "p95": 0.011915034614503384,
+          "p99": 0.05511406064033508,
+          "max": 0.7160935997962952
+        },
+        "incision_gu": {
+          "median": 0.0013763668248429894,
+          "p75": 0.04088336229324341,
+          "p90": 0.31439176201820374,
+          "p95": 0.6922204494476318,
+          "p99": 2.5543484687805176,
+          "max": 30.470922470092773
+        },
+        "hillslope_max_positive_gu": 13.03173828125
+      }
+    },
+    "erosion_delta_gu": {
+      "median": 0.890625,
+      "p75": 2.2734375,
+      "p90": 6.05419921875,
+      "p95": 14.4970703125,
+      "p99": 58.7626953125,
+      "max": 658.110107421875
+    },
+    "max_incision_gu": 658.110107421875,
+    "max_positive_change_gu": 372.8671875,
+    "p95_delta_over_p95_local_relief": 0.009114151820540428,
+    "terrain_factor": {
+      "min": 0.0,
+      "median": 0.9970884919166565,
+      "max": 1.1556566953659058
+    }
+  },
+  "final_lock": {
+    "unknowns": 792641,
+    "cg_status": 0,
+    "linear_solver": "amg_rs_cg",
+    "cg_iterations": 5,
+    "solver_setup_s": 0.4336,
+    "solver_solve_s": 0.3372,
+    "amg_levels": 7,
+    "equation_counts": {
+      "data": 0,
+      "laplacian": 792641,
+      "slope": 0,
+      "slope_anchors": 6400,
+      "boundary_eliminated": 19879
+    },
+    "residuals": {
+      "data_rms": 0.0,
+      "data_max": 0.0,
+      "laplacian_rms": 4.6439392707419205e-06,
+      "laplacian_max": 0.0003638939770098659,
+      "slope_rms": 0.0,
+      "slope_max": 0.0,
+      "data_weighted_rms": 0.0,
+      "laplacian_weighted_rms": 4.6439392707419205e-06,
+      "slope_weighted_rms": 0.0,
+      "boundary_max": 0.0
+    },
+    "assembly": {
+      "rows": 792641,
+      "nnz": 3948195,
+      "empty_equation_rows": 0
+    },
+    "correction_bounds": {
+      "min": -696.631103515625,
+      "max": 1832.236572265625,
+      "fixed_min": -696.631103515625,
+      "fixed_max": 1832.236572265625
+    },
+    "slope_rows": 6400,
+    "anchor_count": 6400,
+    "fixed_count": 19879,
+    "anchor_conflict_tolerance_gu": 32.0,
+    "anchor_spread_max_gu": 0.0,
+    "anchor_conflict_policy": "skip",
+    "anchor_conflicts": [],
+    "mask_islands_removed": 1669,
+    "corner_vertices": 44,
+    "corner_anchors": 88,
+    "corner_anchors_skipped": 44,
+    "ordinary_seam_samples_eligible": 6413,
+    "ordinary_anchors_created": 6365,
+    "ordinary_anchors_skipped_inactive": 0,
+    "ordinary_anchors_skipped_invalid_owner": 64,
+    "ordinary_anchors_skipped_boundary": 5,
+    "active_boundary_vertices": 7011,
+    "active_vertices": 812520,
+    "final_lock_cells": 2.0,
+    "final_lock_active_vertices": 812520,
+    "final_lock_boundary_vertices": 7011
+  },
+  "seam_c0_max_gu": 0.0,
+  "seam_c1_normals": {
+    "count": 6404,
+    "median": 0.0,
+    "p90": 0.0,
+    "p99": 0.0,
+    "max": 4327.761
+  },
+  "review_bbox_vertices": [
+    1600,
+    4737,
+    256,
+    2945
+  ],
+  "artifacts": {
+    "comparison_sheet": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\erosion_structural\\tr_vvardenfell_wall_comparison_sheet.png",
+    "stage3_base": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\erosion_structural\\tr_vvardenfell_wall_stage3_base.png",
+    "structural_pre_erosion": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\erosion_structural\\tr_vvardenfell_wall_structural_pre_erosion.png",
+    "erosion_final_pre_lock": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\erosion_structural\\tr_vvardenfell_wall_erosion_final_pre_lock.png",
+    "erosion_final": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\erosion_structural\\tr_vvardenfell_wall_erosion_final.png"
+  },
+  "timings": {
+    "total_s": 202.0
+  }
+}

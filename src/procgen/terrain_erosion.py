@@ -1,24 +1,25 @@
-"""Targeted geomorphic erosion for a solved terrain window.
+"""Effective geomorphic refinement for a structural terrain window.
 
-Purpose
-    Route water across generated terrain and a fixed owner halo with an
-    eight-neighbor multi-flow direction (MFD) router, then apply modest
-    stream-power incision and hillslope relaxation to editable vertices.
+Pipeline position
+    Stages 7-8. Structural continuation must already have selected the
+    mountain, valley, plateau, and coast forms. This module routes rainfall
+    through cached owner inflow plus a refreshed two-receiver generated graph,
+    then applies calibrated implicit stream-power incision and gentle
+    terrain-dependent hillslope transport.
 
 Inputs
-    A solved local height field, generated/seam/fixed masks, and a JSON erosion
-    configuration. Owner halo vertices participate in routing but are never
-    changed.
+    Structural field, generated/owner/fixed masks, Stage-4 feature rasters,
+    and the JSON erosion configuration.
 
 Outputs
-    The edited local field plus compact diagnostics. An optional callback
-    receives requested snapshot fields without retaining all snapshots in
-    memory.
+    Eroded local field and diagnostics including routing defects, owner inflow,
+    calibrated ``Kdt``, c-distribution, and height-delta percentiles.
 
 Invariants
-    The owner halo, exact seam, and supplied fixed ring are restored after
-    every cycle. Routing depressions are adjusted on a copy only; the rendered
-    field is not globally priority-filled. No random jitter is used.
+    Owner/seam/ring fixed values are restored every cycle. Depression filling,
+    routing noise, and owner routing are never written into the rendered field.
+    The implicit update cannot overshoot a receiver, and underwater vertices
+    receive no terrestrial incision.
 """
 
 from __future__ import annotations
@@ -27,256 +28,283 @@ from typing import Callable
 
 import numpy as np
 from scipy import ndimage
-from skimage.morphology import reconstruction
 
-try:
-    from numba import njit
-except ImportError:  # pragma: no cover - the production environment supplies it
-    njit = None
-
-
-if njit is not None:
-
-    @njit(cache=True)
-    def _mfd_accumulation(height, domain, exponent):
-        """Accumulate unit rainfall in descending-height topological order."""
-        flat_h = height.ravel()
-        flat_domain = domain.ravel()
-        order = np.argsort(-flat_h)
-        accumulation = np.ones(flat_h.size, dtype=np.float64)
-        h, w = height.shape
-        dys = (-1, -1, -1, 0, 0, 1, 1, 1)
-        dxs = (-1, 0, 1, -1, 1, -1, 0, 1)
-        distances = (1.4142135623730951, 1.0, 1.4142135623730951,
-                     1.0, 1.0, 1.4142135623730951, 1.0,
-                     1.4142135623730951)
-        for q in range(order.size):
-            flat_i = order[q]
-            if not flat_domain[flat_i]:
-                continue
-            y = flat_i // w
-            x = flat_i - y * w
-            weights = np.zeros(8, dtype=np.float64)
-            total = 0.0
-            here = flat_h[flat_i]
-            for k in range(8):
-                yy = y + dys[k]
-                xx = x + dxs[k]
-                if yy < 0 or yy >= h or xx < 0 or xx >= w:
-                    continue
-                flat_j = yy * w + xx
-                if not flat_domain[flat_j] or flat_h[flat_j] >= here:
-                    continue
-                slope = (here - flat_h[flat_j]) / distances[k]
-                weight = slope ** exponent
-                weights[k] = weight
-                total += weight
-            if total > 0.0:
-                amount = accumulation[flat_i]
-                for k in range(8):
-                    if weights[k] == 0.0:
-                        continue
-                    yy = y + dys[k]
-                    xx = x + dxs[k]
-                    flat_j = yy * w + xx
-                    accumulation[flat_j] += amount * weights[k] / total
-        return accumulation.reshape((h, w))
-
-else:  # pragma: no cover - prevents an opaque import failure on small fixtures
-
-    def _mfd_accumulation(height, domain, exponent):
-        if height.size > 100_000:
-            raise RuntimeError("numba is required for production erosion windows")
-        order = np.argsort(-height.ravel())
-        acc = np.ones(height.size, dtype=np.float64)
-        h, w = height.shape
-        for flat_i in order:
-            if not domain.ravel()[flat_i]:
-                continue
-            y, x = divmod(int(flat_i), w)
-            receivers = []
-            weights = []
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    if not (dy or dx):
-                        continue
-                    yy, xx = y + dy, x + dx
-                    if 0 <= yy < h and 0 <= xx < w and domain[yy, xx]:
-                        d = 2 ** 0.5 if dy and dx else 1.0
-                        s = (height[y, x] - height[yy, xx]) / d
-                        if s > 0:
-                            receivers.append((yy, xx))
-                            weights.append(s ** exponent)
-            total = sum(weights)
-            if total:
-                for (yy, xx), weight in zip(receivers, weights):
-                    acc[yy * w + xx] += acc[flat_i] * weight / total
-        return acc.reshape(height.shape)
+from procgen.terrain_hydrology import (
+    build_owner_inflow,
+    prepare_generated_routing,
+    priority_flood_routing_surface,
+)
 
 
-def _component_boundary(mask: np.ndarray) -> np.ndarray:
-    return mask & ~ndimage.binary_erosion(
-        mask, structure=np.ones((3, 3), dtype=bool), border_value=0
+def _smootherstep(t: np.ndarray) -> np.ndarray:
+    t = np.clip(t, 0.0, 1.0)
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+
+def _neighbor_mean(height: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    finite = np.isfinite(height) & valid
+    source = np.where(finite, height, 0.0).astype(np.float32)
+    kernel = np.ones((3, 3), dtype=np.float32)
+    total = ndimage.convolve(source, kernel, mode="nearest")
+    count = ndimage.convolve(finite.astype(np.float32), kernel, mode="nearest")
+    return np.divide(total, count, out=height.copy(), where=count > 0.0)
+
+
+def _terrain_factor(features: dict, shape: tuple[int, int]) -> np.ndarray:
+    owner_mask = np.asarray(features["owner_mask"], dtype=bool)
+    factor = np.asarray(features["erosion_factor"], dtype=np.float32)
+    out = np.ones(shape, dtype=np.float32)
+    out[owner_mask] = factor[owner_mask]
+    if owner_mask.any():
+        indices = ndimage.distance_transform_edt(
+            ~owner_mask, return_distances=False, return_indices=True
+        )
+        nearest = factor[tuple(indices)]
+        out[~owner_mask] = nearest[~owner_mask]
+    out[~np.isfinite(out)] = 1.0
+    return ndimage.gaussian_filter(out, 8.0, mode="nearest").astype(np.float32)
+
+
+def _receiver_state(graph: dict, height: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    flat_h = height.ravel()
+    r1 = graph["receiver_1"]
+    r2 = graph["receiver_2"]
+    w1 = graph["weight_1"].astype(np.float32)
+    w2 = graph["weight_2"].astype(np.float32)
+    valid1 = r1 >= 0
+    valid2 = r2 >= 0
+    h1 = np.zeros(r1.shape, dtype=np.float32)
+    h2 = np.zeros(r2.shape, dtype=np.float32)
+    h1[valid1] = flat_h[r1[valid1]]
+    h2[valid2] = flat_h[r2[valid2]]
+    l1 = graph["length_1"]
+    l2 = graph["length_2"]
+    hrec = w1 * h1 + w2 * h2
+    lrec = w1 * l1 + w2 * l2
+    return hrec.reshape(height.shape), lrec.reshape(height.shape)
+
+
+def _calibrate_kdt(
+    accumulation: np.ndarray,
+    receiver_length: np.ndarray,
+    generated_mask: np.ndarray,
+    config: dict,
+) -> tuple[float, dict]:
+    area_ref = float(config.get("area_reference_vertices", 256.0))
+    m = float(config.get("stream_power_m", 0.5))
+    area_start = float(config.get("channel_area_start_vertices", 32.0))
+    area_full = float(config.get("channel_area_full_vertices", 256.0))
+    ahat = np.maximum(accumulation / max(area_ref, 1.0), 0.0)
+    q = np.divide(
+        np.power(ahat, m),
+        receiver_length,
+        out=np.zeros_like(ahat, dtype=np.float32),
+        where=receiver_length > 0.0,
     )
+    channel = _channel_strength(accumulation, generated_mask, config)
+    channel = channel * (receiver_length > 0.0)
+    candidates = generated_mask & (accumulation >= area_start) & (channel > 0.05)
+    values = (q * channel)[candidates & np.isfinite(q)]
+    if values.size == 0:
+        raise ValueError("no channel candidates available for Kdt calibration")
+    target = float(config.get("target_c_p90", 0.15))
+    q90 = max(float(np.percentile(values, 90.0)), 1e-9)
+    kdt = target / q90
+    kdt = float(np.clip(
+        kdt,
+        float(config.get("kdt_min", 1e-4)),
+        float(config.get("kdt_max", 1000.0)),
+    ))
+    return kdt, {
+        "area_reference_vertices": area_ref,
+        "channel_candidates": int(values.size),
+        "q_median": float(np.percentile(values, 50.0)),
+        "q_p75": float(np.percentile(values, 75.0)),
+        "q_p90": q90,
+        "q_p95": float(np.percentile(values, 95.0)),
+        "q_max": float(values.max()),
+        "target_c_p90": target,
+        "chosen_kdt": kdt,
+    }
 
 
-def priority_flood_routing_surface(
-    height: np.ndarray, component: np.ndarray
+def _channel_strength(
+    accumulation: np.ndarray, generated_mask: np.ndarray, config: dict
 ) -> np.ndarray:
-    """Resolve depressions for routing while preserving the actual field."""
-    if not np.isfinite(height[component]).all():
-        raise ValueError("erosion routing component contains non-finite terrain")
-    spill = float(np.max(height[component])) + 1.0
-    mask = np.full(height.shape, spill, dtype=np.float32)
-    mask[component] = height[component]
-    seed = np.full(height.shape, spill, dtype=np.float32)
-    boundary = _component_boundary(component)
-    seed[boundary] = height[boundary]
-    filled = reconstruction(seed, mask, method="erosion")
-    return np.asarray(filled, dtype=np.float32)
-
-
-def _local_lowest_relief(height: np.ndarray, component: np.ndarray):
-    """Return the lowest downhill receiver relief and its distance."""
-    lowest = np.full(height.shape, np.inf, dtype=np.float32)
-    distances = np.full(height.shape, np.inf, dtype=np.float32)
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            if not (dy or dx):
-                continue
-            d = 181.01933598375618 if dy and dx else 128.0
-            shifted = np.full(height.shape, np.inf, dtype=np.float32)
-            ys = slice(max(0, dy), min(height.shape[0], height.shape[0] + dy))
-            xs = slice(max(0, dx), min(height.shape[1], height.shape[1] + dx))
-            src_y = slice(max(0, -dy), min(height.shape[0], height.shape[0] - dy))
-            src_x = slice(max(0, -dx), min(height.shape[1], height.shape[1] - dx))
-            shifted[ys, xs] = height[src_y, src_x]
-            lower = component & (shifted < height)
-            replace = lower & (shifted < lowest)
-            lowest[replace] = shifted[replace]
-            distances[replace] = d
-    relief = np.maximum(height - lowest, 0.0)
-    return relief, distances
-
-
-def _neighbor_mean(height: np.ndarray, component: np.ndarray) -> np.ndarray:
-    total = np.zeros(height.shape, dtype=np.float32)
-    count = np.zeros(height.shape, dtype=np.float32)
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            if not (dy or dx):
-                continue
-            shifted = np.zeros(height.shape, dtype=np.float32)
-            valid = np.zeros(height.shape, dtype=bool)
-            ys = slice(max(0, dy), min(height.shape[0], height.shape[0] + dy))
-            xs = slice(max(0, dx), min(height.shape[1], height.shape[1] + dx))
-            src_y = slice(max(0, -dy), min(height.shape[0], height.shape[0] - dy))
-            src_x = slice(max(0, -dx), min(height.shape[1], height.shape[1] - dx))
-            shifted[ys, xs] = height[src_y, src_x]
-            valid[ys, xs] = component[src_y, src_x]
-            take = component & valid
-            total[take] += shifted[take]
-            count[take] += 1.0
-    return np.divide(total, count, out=height.copy(), where=count > 0)
-
-
-def _deterministic_perturbation(shape, amplitude_gu: float) -> np.ndarray:
-    yy, xx = np.indices(shape, dtype=np.float32)
-    return amplitude_gu * 0.5 * (
-        np.sin(xx / 23.0) + np.cos(yy / 29.0)
+    """Return a spatially softened activation of established catchments."""
+    area_start = float(config.get("channel_area_start_vertices", 32.0))
+    area_full = float(config.get("channel_area_full_vertices", 256.0))
+    log_a = np.log1p(np.maximum(accumulation, 0.0))
+    raw = _smootherstep(
+        (log_a - np.log1p(area_start)) /
+        max(np.log1p(area_full) - np.log1p(area_start), 1e-6)
     )
+    sigma = float(config.get("channel_activation_sigma_verts", 8.0))
+    num = ndimage.gaussian_filter(
+        raw * generated_mask.astype(np.float32), sigma, mode="nearest"
+    )
+    den = ndimage.gaussian_filter(
+        generated_mask.astype(np.float32), sigma, mode="nearest"
+    )
+    channel = np.divide(
+        num, den, out=np.zeros_like(raw, dtype=np.float32), where=den > 1e-6
+    )
+    channel[~generated_mask] = 0.0
+    return channel
+
+
+def _distribution(values: np.ndarray) -> dict:
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return {key: 0.0 for key in ("median", "p75", "p90", "p95", "p99", "max")}
+    return {
+        "median": float(np.percentile(values, 50.0)),
+        "p75": float(np.percentile(values, 75.0)),
+        "p90": float(np.percentile(values, 90.0)),
+        "p95": float(np.percentile(values, 95.0)),
+        "p99": float(np.percentile(values, 99.0)),
+        "max": float(values.max()),
+    }
 
 
 def erode_field(
     field: np.ndarray,
     generated_mask: np.ndarray,
-    owner_halo_mask: np.ndarray,
+    owner_mask: np.ndarray,
     fixed_mask: np.ndarray,
+    features: dict,
     config: dict,
     *,
     snapshot_callback: Callable[[int, np.ndarray], None] | None = None,
 ) -> tuple[np.ndarray, dict]:
-    """Run configured MFD erosion on editable generated terrain."""
-    if not np.isfinite(field[generated_mask | owner_halo_mask]).all():
-        raise ValueError("erosion domain contains non-finite heights")
-    domain = generated_mask | owner_halo_mask
+    """Run calibrated implicit erosion on editable generated terrain."""
+    generated_mask = np.asarray(generated_mask, dtype=bool)
+    owner_mask = np.asarray(owner_mask, dtype=bool)
+    fixed_mask = np.asarray(fixed_mask, dtype=bool)
+    domain = generated_mask | owner_mask
     editable = generated_mask & ~fixed_mask
     if not editable.any():
         raise ValueError("erosion has no editable generated vertices")
+    if not np.isfinite(field[domain]).all():
+        raise ValueError("erosion domain contains non-finite terrain")
     work = np.asarray(field, dtype=np.float32).copy()
+    initial = work.copy()
     fixed_values = work.copy()
-    cycles = int(config.get("cycles", 16))
-    snapshot_cycles = {int(v) for v in config.get("snapshot_cycles", [0, 4, 8, 16])}
-    exponent = float(config.get("mfd_exponent", 1.3))
-    stream_strength = float(config.get("incision_strength_gu", 3.0))
-    accumulation_ref_percentile = float(
-        config.get("accumulation_ref_percentile", 95.0)
-    )
-    stream_m = float(config.get("stream_power_m", 0.5))
-    stream_n = float(config.get("stream_power_n", 1.0))
-    stability_fraction = float(config.get("stability_fraction", 0.25))
-    relaxation = float(config.get("hillslope_relaxation", 0.03))
-    perturbation = float(config.get("routing_perturbation_gu", 8.0))
+    cycles = int(config.get("cycles", 24))
+    snapshot_cycles = {int(v) for v in config.get(
+        "snapshot_cycles", [0, 4, 8, 16, 24]
+    )}
+    reroute_every = max(1, int(config.get("reroute_every", 2)))
     sea_level = float(config.get("sea_level_gu", 0.0))
-    labels, count = ndimage.label(domain, structure=np.ones((3, 3), dtype=bool))
-    components = []
-    for label in range(1, count + 1):
-        ys, xs = np.nonzero(labels == label)
-        if ys.size:
-            components.append((label, int(ys.min()), int(ys.max()) + 1,
-                               int(xs.min()), int(xs.max()) + 1))
+    hillslope_enabled = bool(config.get("hillslope_enabled", True))
+    hillslope_strength = float(config.get("hillslope_strength", 0.02))
+    owner_domain = owner_mask & np.isfinite(work)
+    static_route = priority_flood_routing_surface(work, domain)
+    owner_inflow, owner_report = build_owner_inflow(
+        static_route, owner_domain, generated_mask
+    )
+    graph = None
+    accumulation = None
+    route_reports = []
+    kdt_report = None
+    kdt = None
+    terrain_factor = _terrain_factor(features, work.shape)
+    area_start = float(config.get("channel_area_start_vertices", 32.0))
+    area_full = float(config.get("channel_area_full_vertices", 256.0))
+    m = float(config.get("stream_power_m", 0.5))
+    n_exp = float(config.get("stream_power_n", 1.0))
+    cycle_reports = {}
     if snapshot_callback and 0 in snapshot_cycles:
         snapshot_callback(0, work.copy())
-    total_incision = 0.0
-    max_incision = 0.0
-    max_accumulation = 0.0
+
     for cycle in range(1, cycles + 1):
-        for label, r0, r1, c0, c1 in components:
-            component = labels[r0:r1, c0:c1] == label
-            h = work[r0:r1, c0:c1]
-            edit = editable[r0:r1, c0:c1]
-            route = priority_flood_routing_surface(h, component)
-            route += _deterministic_perturbation(route.shape, perturbation) * component
-            accumulation = _mfd_accumulation(route, component, exponent)
-            candidates = edit & (h > sea_level)
-            if not candidates.any():
-                continue
-            ref = float(np.percentile(accumulation[candidates],
-                                      accumulation_ref_percentile))
-            ref = max(ref, 1.0)
-            relief, distances = _local_lowest_relief(h, component)
-            slope = relief / np.maximum(distances, 1.0)
-            ahat = accumulation / ref
-            incision = stream_strength * np.power(ahat, stream_m) * np.power(
-                slope, stream_n
+        if graph is None or (cycle - 1) % reroute_every == 0:
+            graph, accumulation, route_report = prepare_generated_routing(
+                work, generated_mask, owner_mask, owner_inflow, config,
+                seed_offset=cycle,
             )
-            max_incise = stability_fraction * relief
-            delta = np.minimum(np.maximum(incision, 0.0), max_incise)
-            delta[~candidates] = 0.0
-            h -= delta.astype(np.float32)
-            total_incision += float(delta.sum())
-            max_incision = max(max_incision, float(delta.max(initial=0.0)))
-            max_accumulation = max(max_accumulation,
-                                   float(accumulation.max(initial=0.0)))
-            if relaxation > 0.0:
-                mean = _neighbor_mean(h, component)
-                h[candidates] += relaxation * (mean[candidates] - h[candidates])
-            work[r0:r1, c0:c1] = h
+            route_reports.append({"cycle": cycle, **route_report})
+            hrec, lrec = _receiver_state(graph, work)
+            if kdt is None:
+                kdt, kdt_report = _calibrate_kdt(
+                    accumulation, lrec, generated_mask, config
+                )
+        hrec, lrec = _receiver_state(graph, work)
+        ahat = np.maximum(accumulation / float(
+            config.get("area_reference_vertices", 256.0)
+        ), 0.0)
+        q = np.divide(
+            np.power(ahat, m), lrec,
+            out=np.zeros_like(ahat, dtype=np.float32),
+            where=lrec > 0.0,
+        )
+        # Threshold on the actual catchment, then blur the activation field.
+        # Blurring log(A) itself moves channel heads below the threshold and
+        # makes the calibrated erosion silently inert on bounded windows.
+        channel = _channel_strength(accumulation, generated_mask, config)
+        c_eff = kdt * q * channel * terrain_factor
+        valid = editable & (work > sea_level) & (lrec > 0.0)
+        flat_work = work.ravel()
+        flat_hrec = hrec.ravel()
+        flat_c = c_eff.ravel()
+        delta = np.zeros(work.size, dtype=np.float32)
+        flat_valid = valid.ravel()
+        delta[flat_valid] = (
+            flat_c[flat_valid] * (flat_hrec[flat_valid] - flat_work[flat_valid])
+            / (1.0 + flat_c[flat_valid])
+        ).astype(np.float32)
+        work += delta.reshape(work.shape)
+        positive_before = work.copy()
+        if hillslope_enabled and cycle % max(1, int(
+            config.get("hillslope_every", 1)
+        )) == 0:
+            mean = _neighbor_mean(work, domain)
+            diffuse = hillslope_strength * terrain_factor * (mean - work)
+            diffuse *= 1.0 - 0.75 * channel
+            diffuse[~editable] = 0.0
+            diffuse[work <= sea_level] = 0.0
+            work += diffuse.astype(np.float32)
         work[fixed_mask] = fixed_values[fixed_mask]
         if snapshot_callback and cycle in snapshot_cycles:
             snapshot_callback(cycle, work.copy())
+        cycle_reports[str(cycle)] = {
+            "active_channel_vertices": int(np.count_nonzero(valid & (channel > 0.0))),
+            "c_distribution": _distribution(c_eff[valid]),
+            "incision_gu": _distribution(
+                np.maximum(-delta.reshape(work.shape)[valid], 0.0)
+            ),
+            "hillslope_max_positive_gu": float(
+                np.maximum(work - positive_before, 0.0).max(initial=0.0)
+            ),
+        }
+
+    delta = work[editable] - initial[editable]
+    local_relief = ndimage.maximum_filter(initial, size=17) - ndimage.minimum_filter(
+        initial, size=17
+    )
+    p95_relief = max(float(np.percentile(local_relief[editable], 95.0)), 1e-6)
     report = {
         "cycles": cycles,
-        "components": len(components),
-        "domain_vertices": int(domain.sum()),
+        "reroute_every": reroute_every,
+        "generated_vertices": int(generated_mask.sum()),
         "editable_vertices": int(editable.sum()),
-        "owner_halo_vertices": int(owner_halo_mask.sum()),
-        "total_incision_gu": round(total_incision, 3),
-        "max_incision_gu": round(max_incision, 3),
-        "max_accumulation": round(max_accumulation, 3),
-        "mfd_exponent": exponent,
-        "stream_power_m": stream_m,
-        "stream_power_n": stream_n,
-        "stability_fraction": stability_fraction,
+        "owner_vertices": int(owner_mask.sum()),
+        "owner_inflow": owner_report,
+        "routing_rebuilds": len(route_reports),
+        "routing_reports": route_reports,
+        "kdt_calibration": kdt_report,
+        "c_distribution_final": cycle_reports[str(cycles)]["c_distribution"],
+        "cycle_reports": cycle_reports,
+        "erosion_delta_gu": _distribution(np.abs(delta)),
+        "max_incision_gu": float(np.maximum(-delta, 0.0).max(initial=0.0)),
+        "max_positive_change_gu": float(np.maximum(delta, 0.0).max(initial=0.0)),
+        "p95_delta_over_p95_local_relief": float(
+            np.percentile(np.abs(delta), 95.0) / p95_relief
+        ),
+        "terrain_factor": {
+            "min": float(terrain_factor[editable].min()),
+            "median": float(np.median(terrain_factor[editable])),
+            "max": float(terrain_factor[editable].max()),
+        },
     }
     return work, report

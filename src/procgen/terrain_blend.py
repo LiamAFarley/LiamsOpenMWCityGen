@@ -221,6 +221,17 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     target = target_full[r_lo:r_hi, c_lo:c_hi]
     own_view = own_full[r_lo:r_hi, c_lo:c_hi]
     oth_w = arrays["oth_h"][r_lo:r_hi, c_lo:c_hi]
+    # Feature analysis needs the effective authoritative owner footprint, not
+    # the broader generated solve corridor. Cells whose height authority was
+    # deliberately downgraded to the base source are not owner features.
+    owner_cells = {
+        (int(x + gx0), int(y + gy0))
+        for y, x in zip(*np.nonzero(
+            (cell_height_source != 0) & (cell_height_source != base_code)
+        ))
+    }
+    owner_mask_full = _cell_vertex_mask(owner_cells, tam_h.shape, gy0, gx0)
+    owner_mask = owner_mask_full[r_lo:r_hi, c_lo:c_hi]
     seam_v, edge_list = rasterize_seam(
         edges, solve_cells, solve_mask_base.shape, gy0, gx0, r_lo, c_lo
     )
@@ -307,7 +318,9 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
         own_full=own_full,
         base_code=base_code, gy0=gy0, gx0=gx0,
         names=manifest["source_names"], smask=active_mask, tam_w=tam_w,
-        target=target, own_view=own_view, oth_w=oth_w, seam_v=seam_v,
+        target=target, own_view=own_view, oth_w=oth_w,
+        owner_mask=owner_mask, owner_field=own_view,
+        seam_v=seam_v,
         ring_v=outer_v, dist_seam=dist_seam, hard=hard, hard_vals=hard_vals,
         width_cells=requested_width_cells,
         solve_width_cells=solve_width_cells,
@@ -545,13 +558,48 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
         + normals[0][1] * normals[1][1] == 0
     }
     corner_diagonal_vertices: set[tuple[int, int]] = set()
+    corner_anchor_values: dict[tuple[int, int], float] = {}
+    corner_anchor_skipped = 0
     for flat, normals in corner_vertices.items():
         sy, sx = divmod(flat, target.shape[1])
         dy1, dx1 = normals[0]
         dy2, dx2 = normals[1]
+        h_corner = float(fixed_final[sy, sx])
+        # Each corner leg gets its own first-inland continuation. The
+        # diagonal point carries both owner slopes; claims are never averaged.
+        for dy, dx in normals:
+            uy, ux = sy + dy, sx + dx
+            oy, ox = sy - dy, sx - dx
+            if not (0 <= uy < target.shape[0] and 0 <= ux < target.shape[1]
+                    and 0 <= oy < target.shape[0] and 0 <= ox < target.shape[1]):
+                corner_anchor_skipped += 1
+                continue
+            owner_h = float(ctx["own_view"][oy, ox])
+            if not np.isfinite(owner_h) or not active[uy, ux] or fixed[uy, ux]:
+                corner_anchor_skipped += 1
+                continue
+            corner_anchor_values[(uy, ux)] = (
+                h_corner + (h_corner - owner_h) - target[uy, ux]
+            )
         uy, ux = sy + dy1 + dy2, sx + dx1 + dx2
-        if 0 <= uy < target.shape[0] and 0 <= ux < target.shape[1]:
+        if (0 <= uy < target.shape[0] and 0 <= ux < target.shape[1]
+                and active[uy, ux] and not fixed[uy, ux]):
             corner_diagonal_vertices.add((uy, ux))
+            oy1, ox1 = sy - dy1, sx - dx1
+            oy2, ox2 = sy - dy2, sx - dx2
+            if (0 <= oy1 < target.shape[0] and 0 <= ox1 < target.shape[1]
+                    and 0 <= oy2 < target.shape[0] and 0 <= ox2 < target.shape[1]):
+                owner1 = float(ctx["own_view"][oy1, ox1])
+                owner2 = float(ctx["own_view"][oy2, ox2])
+                if np.isfinite(owner1) and np.isfinite(owner2):
+                    corner_anchor_values[(uy, ux)] = (
+                        h_corner + (h_corner - owner1)
+                        + (h_corner - owner2) - target[uy, ux]
+                    )
+                else:
+                    corner_anchor_skipped += 1
+        else:
+            corner_anchor_skipped += 1
     ordinary_seam_samples_eligible = 0
     ordinary_anchors_created = 0
     ordinary_anchors_skipped_inactive = 0
@@ -584,6 +632,8 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
                 ordinary_anchors_skipped_inactive += 1
                 continue
             if (uy, ux) in corner_diagonal_vertices:
+                continue
+            if (uy, ux) in corner_anchor_values:
                 continue
             h_seam = float(fixed_final[sy, sx])
             desired_height = h_seam + (h_seam - float(ctx["own_view"][oy, ox]))
@@ -630,6 +680,9 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
             continue
         anchors[uy, ux] = True
         anchor_values[uy, ux] = float(np.mean(claims))
+    for (uy, ux), value in corner_anchor_values.items():
+        anchors[uy, ux] = True
+        anchor_values[uy, ux] = value
     if (anchor_conflicts or fixed_conflicts) and conflict_policy == "error":
         first = (anchor_conflicts + fixed_conflicts)[0]
         raise ValueError(
@@ -656,8 +709,8 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     report["anchor_conflicts"] = anchor_conflicts + fixed_conflicts
     report["mask_islands_removed"] = int(ctx.get("mask_islands_removed", 0))
     report["corner_vertices"] = int(len(corner_vertices))
-    report["corner_anchors"] = 0
-    report["corner_anchors_skipped"] = 0
+    report["corner_anchors"] = int(len(corner_anchor_values))
+    report["corner_anchors_skipped"] = int(corner_anchor_skipped)
     report["ordinary_seam_samples_eligible"] = int(
         ordinary_seam_samples_eligible
     )

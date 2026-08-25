@@ -89,23 +89,18 @@ def curve_plot(info_by_gain: dict, out_path: Path) -> None:
     colors = {2.0: (120, 160, 255), 3.0: (230, 90, 60)}
     for gain_key, info in info_by_gain.items():
         g = float(gain_key)
-        g1 = float(info.get("gentle_gain", 1.5))
-        eg = float(info["E_gentle_gu"])
         ef = float(info["E_full_gu"])
         def curve_gain(e):
-            t1 = min(e / max(eg, 1e-6), 1.0)
-            s1 = t1 ** 3 * (t1 * (6 * t1 - 15) + 10)
-            val = 1.0 + (g1 - 1.0) * s1
-            t2 = min(max((e - eg) / max(ef - eg, 1e-6), 0.0), 1.0)
-            s2 = t2 ** 3 * (t2 * (6 * t2 - 15) + 10)
-            return val + (g - g1) * s2
+            t = min(max(e / max(ef, 1e-6), 0.0), 1.0)
+            s = t ** 3 * (t * (6 * t - 15) + 10)
+            return 1.0 + (g - 1.0) * s
         pts = []
         for i in range(201):
             e = hi * i / 200.0
             pts.append((px(e), py(min(curve_gain(e), 3.2))))
         d.line(pts, fill=colors.get(g, (60, 60, 60)), width=3)
         d.text((px(min(ef, hi)) + 4, py(g) - 14),
-               f"{g:.0f}x (gentle->{int(eg)}, full->{int(ef)})",
+               f"{g:.0f}x (full->{int(ef)})",
                fill=colors.get(g, (60, 60, 60)))
     d.text((70, 12), "relief response: gain vs broad elevation D (GU)", fill=(30, 30, 30))
     img.save(out_path)
@@ -214,8 +209,7 @@ def main() -> int:
         oth_view_full = scaled.astype(np.float32, copy=False)
         info_by_gain[g] = info
         uw_err = info.get("underwater_max_delta_gu", 0.0)
-        print(f"  gain {g:.0f}x: gentle_end={info['E_gentle_gu']} "
-              f"full_end={info['E_full_gu']} gentle_gain={info['gentle_gain']} "
+        print(f"  gain {g:.0f}x: full_end={info['E_full_gu']} "
               f"underwater_err={uw_err} fine_rms_ratio={info.get('fine_rms_ratio')} "
               f"({time.time() - tg:.1f}s)")
         metrics["gains"][str(g)] = info
