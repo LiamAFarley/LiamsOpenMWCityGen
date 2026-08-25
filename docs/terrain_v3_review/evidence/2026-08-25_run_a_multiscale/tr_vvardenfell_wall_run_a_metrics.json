@@ -1,0 +1,91 @@
+{
+  "run": "A",
+  "region": "tr_vvardenfell_wall",
+  "review_bbox_vertices": [
+    1600,
+    4737,
+    256,
+    2945
+  ],
+  "features": {
+    "owner_vertices": 7312449,
+    "ridge_vertices": 389221,
+    "valley_vertices": 480603,
+    "plateau_vertices": 323922,
+    "scarp_vertices": 255472,
+    "underwater_vertices": 1746776,
+    "shoreline_vertices": 60737,
+    "coastal_vertices": 2505744
+  },
+  "structure": {
+    "owner_vertices": 7312449,
+    "generated_vertices": 2551237,
+    "fine_keep_at_seam": 0.2,
+    "fine_restore_distance_cells": 6.0,
+    "macro": {
+      "name": "macro",
+      "width_cells": 8.0,
+      "active_vertices": 2441691,
+      "outer_boundary_vertices": 17900,
+      "fixed_vertices": 18855,
+      "correction_min": -2025.056640625,
+      "correction_max": 2092.689453125,
+      "seam_claim_conflicts": 0,
+      "seam_claim_spread_max": 0.0,
+      "first_inland_anchor_count": 5458,
+      "first_inland_anchor_skipped_corner": 104,
+      "first_inland_anchor_skipped_invalid": 953,
+      "solve": {
+        "unknowns": 2422836,
+        "guide_rows": 0,
+        "guide_weight_max": 0.0,
+        "linear_solver": "amg_rs_cg",
+        "cg_iterations": 6,
+        "solver_setup_s": 1.654,
+        "solver_solve_s": 1.2045,
+        "residual_rms": 8.316388622171974e-06,
+        "correction_min": -2025.056640625,
+        "correction_max": 2092.689453125,
+        "amg_levels": 8
+      }
+    },
+    "meso": {
+      "name": "meso",
+      "width_cells": 4.0,
+      "active_vertices": 1528754,
+      "outer_boundary_vertices": 13913,
+      "fixed_vertices": 14868,
+      "correction_min": -5531.734375,
+      "correction_max": 1457.71484375,
+      "seam_claim_conflicts": 0,
+      "seam_claim_spread_max": 0.0,
+      "first_inland_anchor_count": 5458,
+      "first_inland_anchor_skipped_corner": 104,
+      "first_inland_anchor_skipped_invalid": 953,
+      "solve": {
+        "unknowns": 1513886,
+        "guide_rows": 0,
+        "guide_weight_max": 0.0,
+        "linear_solver": "amg_rs_cg",
+        "cg_iterations": 5,
+        "solver_setup_s": 0.8953,
+        "solver_solve_s": 0.6298,
+        "residual_rms": 2.7454474931920958e-05,
+        "correction_min": -5531.734375,
+        "correction_max": 1457.71484375,
+        "amg_levels": 8
+      }
+    }
+  },
+  "artifacts": {
+    "stage3_base": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\run_a_multiscale_tr_2026-08-25\\tr_vvardenfell_wall_stage3_base.png",
+    "cleaned_fine": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\run_a_multiscale_tr_2026-08-25\\tr_vvardenfell_wall_cleaned_fine.png",
+    "macro_continuation": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\run_a_multiscale_tr_2026-08-25\\tr_vvardenfell_wall_macro_continuation.png",
+    "macro_meso_continuation": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\run_a_multiscale_tr_2026-08-25\\tr_vvardenfell_wall_macro_meso_continuation.png"
+  },
+  "erosion_run": false,
+  "final_lock_run": false,
+  "timings": {
+    "total_s": 69.7
+  }
+}

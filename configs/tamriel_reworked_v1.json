@@ -305,7 +305,11 @@
     "sigma_regional_verts": 64.0,
     "prominence_ref_percentile": 90.0
   },
-  "structure": {
+    "structure": {
+    "macro_width_cells": 8.0,
+    "meso_width_cells": 4.0,
+    "fine_keep_at_seam": 0.2,
+    "fine_restore_distance_cells": 6.0,
     "owner_analysis_halo_cells": 8.0,
     "gaussian_scales_verts": [
       8.0,
@@ -315,17 +319,6 @@
     "tensor_sigma_verts": 10.0,
     "ridge_percentile": 88.0,
     "valley_percentile": 88.0,
-    "guide_max_cells": 6.0,
-    "massif_guide_max_cells": 8.0,
-    "ridge_weight": 0.7,
-    "valley_weight": 1.0,
-    "plateau_top_weight": 0.3,
-    "scarp_weight": 0.8,
-    "guide_ribbon_sigma_verts": 12.0,
-    "guide_seed_stride_verts": 64,
-    "guide_turn_deg_per_8_verts": 12.0,
-    "guide_score_threshold": 0.35,
-    "guide_decay_fraction": 0.55,
     "linear_solver": "amg_rs_cg",
     "cg_tol": 1E-06,
     "cg_maxiter": 200,

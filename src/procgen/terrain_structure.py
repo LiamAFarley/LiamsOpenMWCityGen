@@ -1,15 +1,16 @@
-"""Sparse semantic continuation and screened-Poisson structural solve.
+"""Multiscale owner-field continuation and screened-Poisson structural solve.
 
 Pipeline position
-    Stages 5-6. Feature rasters from :mod:`terrain_features` are reduced to a
-    small set of ridge, valley, plateau, and scarp guide curves crossing the
-    owner seam. Guides add low-frequency structure; they never copy owner
-    pixels or create dense seam profiles.
+    Stages 5-6. Owner and Stage-3 terrain pyramids are converted to complete
+    macro and meso residual fields. Each residual is continued across the
+    generated corridor as one harmonic field; no sparse feature lines or raw
+    owner-height profiles are injected.
 
 Solver
-    The correction ``C = H_structural - H0`` satisfies
-    ``(L + W) C = W * (Hguide - H0)`` with the accepted exact seam and outer
-    boundary Dirichlet constraints. This is second-order and AMG-friendly.
+    The generic correction ``C = H_structural - H0`` satisfies
+    ``(L + W) C = W * (Hguide - H0)`` with seam and outer-boundary Dirichlet
+    constraints. Run A sets ``W = 0`` for a pure second-order harmonic band
+    solve, which remains AMG-friendly.
 """
 
 from __future__ import annotations
@@ -27,17 +28,10 @@ except ImportError:  # pragma: no cover
 
 
 DEFAULTS = {
-    "guide_max_cells": 6.0,
-    "massif_guide_max_cells": 8.0,
-    "ridge_weight": 0.7,
-    "valley_weight": 1.0,
-    "plateau_top_weight": 0.3,
-    "scarp_weight": 0.8,
-    "guide_ribbon_sigma_verts": 8.0,
-    "guide_seed_stride_verts": 64,
-    "guide_turn_deg_per_8_verts": 12.0,
-    "guide_score_threshold": 0.35,
-    "guide_decay_fraction": 0.55,
+    "macro_width_cells": 8.0,
+    "meso_width_cells": 4.0,
+    "fine_keep_at_seam": 0.2,
+    "fine_restore_distance_cells": 6.0,
     "linear_solver": "amg_rs_cg",
     "cg_tol": 1e-6,
     "cg_maxiter": 200,
@@ -50,159 +44,224 @@ def _smootherstep(value: np.ndarray | float) -> np.ndarray:
     return value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
 
 
-def _feature_kind(features: dict, oy: int, ox: int, config: dict) -> tuple[str, float] | None:
-    threshold = float(config.get("guide_score_threshold", 0.35))
-    candidates = [
-        ("ridge", float(features["ridge_score"][oy, ox]),
-         float(config.get("ridge_weight", 0.7))),
-        ("valley", float(features["valley_score"][oy, ox]),
-         float(config.get("valley_weight", 1.0))),
-    ]
-    if features["plateau_top_mask"][oy, ox]:
-        candidates.append(("plateau", 1.0,
-                          float(config.get("plateau_top_weight", 0.3))))
-    if features["scarp_mask"][oy, ox]:
-        candidates.append(("scarp", 1.0,
-                          float(config.get("scarp_weight", 0.8))))
-    kind, score, weight = max(candidates, key=lambda item: item[1])
-    if score < threshold and kind not in {"plateau", "scarp"}:
-        return None
-    return kind, weight
+def _normalized_band(field: np.ndarray, valid: np.ndarray, sigma: float) -> np.ndarray:
+    values = np.where(valid, field, 0.0).astype(np.float32)
+    weights = ndimage.gaussian_filter(
+        valid.astype(np.float32), float(sigma), mode="nearest"
+    )
+    smoothed = ndimage.gaussian_filter(values, float(sigma), mode="nearest")
+    return np.divide(
+        smoothed,
+        weights,
+        out=np.zeros_like(smoothed, dtype=np.float32),
+        where=weights > 1e-6,
+    )
 
 
-def _add_ribbon(
-    source_sum: np.ndarray,
-    source_weight: np.ndarray,
+def _complete_band_boundary(active: np.ndarray, seam: np.ndarray) -> np.ndarray:
+    eroded = ndimage.binary_erosion(
+        active, structure=ndimage.generate_binary_structure(2, 1), border_value=0
+    )
+    return active & ~seam & ~eroded
+
+
+def _seam_band_values(
+    owner_band: np.ndarray,
+    target_band: np.ndarray,
+    ctx: dict,
+    seam: np.ndarray,
+) -> tuple[np.ndarray, dict]:
+    values = target_band.astype(np.float32, copy=True)
+    assigned = np.zeros(seam.shape, dtype=bool)
+    conflicts = 0
+    max_spread = 0.0
+    for edge in ctx["edge_list"]:
+        normal = tuple(int(round(v)) for v in edge["normal"])
+        for flat in edge["verts"]:
+            sy, sx = divmod(int(flat), target_band.shape[1])
+            oy, ox = sy - normal[0], sx - normal[1]
+            if not (seam[sy, sx] and 0 <= oy < owner_band.shape[0] and 0 <= ox < owner_band.shape[1]):
+                continue
+            candidate = float(owner_band[oy, ox])
+            if not np.isfinite(candidate):
+                continue
+            if assigned[sy, sx]:
+                spread = abs(float(values[sy, sx]) - candidate)
+                max_spread = max(max_spread, spread)
+                if spread > 1e-3:
+                    conflicts += 1
+                continue
+            values[sy, sx] = candidate
+            assigned[sy, sx] = True
+    return values, {"seam_claim_conflicts": conflicts, "seam_claim_spread_max": max_spread}
+
+
+def _first_inland_band_anchors(
+    owner_band: np.ndarray,
+    target_band: np.ndarray,
+    ctx: dict,
     active: np.ndarray,
-    owner_mask: np.ndarray,
-    points: list[tuple[float, float, float]],
-    amplitude: float,
-    base_weight: float,
-    sigma: float,
-    decay_fraction: float,
-) -> int:
-    """Add sparse guide samples; the caller performs one global Gaussian pass."""
-    H, W = source_sum.shape
-    added = 0
-    for distance, fy, fx in points:
-        cy, cx = int(round(fy)), int(round(fx))
-        if not (0 <= cy < H and 0 <= cx < W):
-            continue
-        longitudinal = np.exp(-distance / max(decay_fraction, 1e-3))
-        if not active[cy, cx] or owner_mask[cy, cx]:
-            continue
-        weight = float(base_weight) * float(longitudinal)
-        source_weight[cy, cx] += weight
-        source_sum[cy, cx] += weight * float(amplitude) * float(longitudinal)
-        added += 1
-    return added
+    seam: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    incidence: dict[int, set[tuple[int, int]]] = {}
+    for edge in ctx["edge_list"]:
+        normal = tuple(int(round(v)) for v in edge["normal"])
+        for flat in edge["verts"]:
+            incidence.setdefault(int(flat), set()).add(normal)
+
+    anchor_mask = np.zeros(active.shape, dtype=bool)
+    anchor_values = target_band.astype(np.float32, copy=True)
+    skipped_corner = 0
+    skipped_invalid = 0
+    for edge in ctx["edge_list"]:
+        normal = tuple(int(round(v)) for v in edge["normal"])
+        for flat in edge["verts"]:
+            flat = int(flat)
+            if len(incidence.get(flat, ())) != 1:
+                skipped_corner += 1
+                continue
+            sy, sx = divmod(flat, target_band.shape[1])
+            oy, ox = sy - normal[0], sx - normal[1]
+            by, bx = oy - normal[0], ox - normal[1]
+            fy, fx = sy + normal[0], sx + normal[1]
+            if not (
+                0 <= oy < owner_band.shape[0]
+                and 0 <= ox < owner_band.shape[1]
+                and 0 <= by < owner_band.shape[0]
+                and 0 <= bx < owner_band.shape[1]
+            ):
+                skipped_invalid += 1
+                continue
+            if not (0 <= fy < target_band.shape[0] and 0 <= fx < target_band.shape[1]):
+                skipped_invalid += 1
+                continue
+            if not active[fy, fx] or seam[fy, fx]:
+                skipped_invalid += 1
+                continue
+            b0 = float(owner_band[oy, ox])
+            bout = float(owner_band[by, bx])
+            if not np.isfinite(b0) or not np.isfinite(bout):
+                skipped_invalid += 1
+                continue
+            candidate = b0 + (b0 - bout)
+            if anchor_mask[fy, fx]:
+                if abs(float(anchor_values[fy, fx]) - candidate) > 1e-3:
+                    skipped_corner += 1
+                continue
+            anchor_mask[fy, fx] = True
+            anchor_values[fy, fx] = candidate
+    return anchor_mask, anchor_values, {
+        "first_inland_anchor_count": int(anchor_mask.sum()),
+        "first_inland_anchor_skipped_corner": skipped_corner,
+        "first_inland_anchor_skipped_invalid": skipped_invalid,
+    }
 
 
-def build_structural_guides(
+def _solve_band(
+    name: str,
+    target_band: np.ndarray,
+    owner_band: np.ndarray,
+    ctx: dict,
+    generated: np.ndarray,
+    width_cells: float,
+    config: dict,
+) -> tuple[np.ndarray, dict]:
+    active = generated & (ctx["dist_seam"] <= float(width_cells) * 64.0)
+    seam = np.asarray(ctx["seam_v"], dtype=bool) & active
+    outer = _complete_band_boundary(active, seam)
+    fixed = seam | outer
+    seam_values, seam_report = _seam_band_values(owner_band, target_band, ctx, seam)
+    anchor_mask, anchor_values, anchor_report = _first_inland_band_anchors(
+        owner_band, target_band, ctx, active, seam
+    )
+    fixed |= anchor_mask
+    fixed_values = target_band.astype(np.float32, copy=True)
+    fixed_values[seam] = seam_values[seam]
+    fixed_values[anchor_mask] = anchor_values[anchor_mask]
+    solved, solve_report = solve_screened_structure(
+        target_band,
+        active,
+        fixed,
+        fixed_values,
+        target_band,
+        np.zeros(target_band.shape, dtype=np.float32),
+        config,
+    )
+    report = {
+        "name": name,
+        "width_cells": float(width_cells),
+        "active_vertices": int(active.sum()),
+        "outer_boundary_vertices": int(outer.sum()),
+        "fixed_vertices": int(fixed.sum()),
+        "correction_min": float((solved - target_band)[active].min(initial=0.0)),
+        "correction_max": float((solved - target_band)[active].max(initial=0.0)),
+        **seam_report,
+        **anchor_report,
+        "solve": solve_report,
+    }
+    return solved.astype(np.float32), report
+
+
+def build_multiscale_structural_fields(
     h0: np.ndarray,
     ctx: dict,
     features: dict,
     config: dict | None = None,
-) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Build sparse semantic guide-value and guide-weight rasters."""
+) -> tuple[dict[str, np.ndarray], dict]:
+    """Continue complete owner macro/meso bands into generated terrain."""
     c = dict(DEFAULTS)
     if config:
         c.update(config)
     active = np.asarray(ctx["smask"], dtype=bool)
     owner_mask = np.asarray(features["owner_mask"], dtype=bool)
-    source_sum = np.zeros(h0.shape, dtype=np.float32)
-    source_weight = np.zeros(h0.shape, dtype=np.float32)
-    H24 = features["H24"]
-    H64 = features["H64"]
-    H8 = features["H8"]
-    anomaly = np.nan_to_num(H24 - H64, nan=0.0)
-    local_relief = np.maximum(
-        np.nan_to_num(H8, nan=0.0), np.nan_to_num(H24, nan=0.0)
-    ) - np.minimum(
-        np.nan_to_num(H8, nan=0.0), np.nan_to_num(H24, nan=0.0)
+    generated = active & ~owner_mask & np.isfinite(h0)
+    generated_valid = generated & np.isfinite(h0)
+
+    target8 = _normalized_band(h0, generated_valid, 8.0)
+    target24 = _normalized_band(h0, generated_valid, 24.0)
+    target64 = _normalized_band(h0, generated_valid, 64.0)
+    target_macro = target24 - target64
+    target_meso = target8 - target24
+    owner_macro = features["H24"] - features["H64"]
+    owner_meso = features["H8"] - features["H24"]
+
+    fine_low = _normalized_band(h0, generated_valid, 4.0)
+    distance = np.nan_to_num(ctx["dist_seam"], nan=0.0)
+    restore = max(float(c["fine_restore_distance_cells"]) * 64.0, 1.0)
+    keep = float(c["fine_keep_at_seam"]) + (
+        1.0 - float(c["fine_keep_at_seam"])
+    ) * _smootherstep(distance / restore)
+    cleaned = h0.astype(np.float32, copy=True)
+    cleaned[generated] = fine_low[generated] + keep[generated] * (
+        h0[generated] - fine_low[generated]
     )
-    angle = features["orientation_angle"]
-    stride = max(1, int(c["guide_seed_stride_verts"]))
-    sigma = float(c["guide_ribbon_sigma_verts"])
-    decay_fraction = float(c["guide_decay_fraction"])
-    feature_seed_counts = {"ridge": 0, "valley": 0, "plateau": 0, "scarp": 0}
-    guide_support_vertices = 0
 
-    for edge in ctx["edge_list"]:
-        normal = tuple(int(round(v)) for v in edge["normal"])
-        last_seed_index = -stride
-        for index, flat in enumerate(edge["verts"]):
-            if index - last_seed_index < stride:
-                continue
-            sy, sx = divmod(int(flat), h0.shape[1])
-            oy, ox = sy - normal[0], sx - normal[1]
-            if not (0 <= oy < h0.shape[0] and 0 <= ox < h0.shape[1]):
-                continue
-            if not owner_mask[oy, ox] or not np.isfinite(H24[oy, ox]):
-                continue
-            selected = _feature_kind(features, oy, ox, c)
-            if selected is None:
-                continue
-            kind, base_weight = selected
-            last_seed_index = index
-            feature_seed_counts[kind] += 1
-            tangent = np.array([np.sin(angle[oy, ox]), np.cos(angle[oy, ox])])
-            tangent /= max(float(np.linalg.norm(tangent)), 1e-6)
-            nvec = np.array(normal, dtype=np.float32)
-            max_cells = float(c["guide_max_cells"])
-            if kind == "ridge" and abs(float(anomaly[oy, ox])) > 0.5 * max(
-                abs(float(local_relief[oy, ox])), 256.0
-            ):
-                max_cells = float(c["massif_guide_max_cells"])
-            length = max_cells * 64.0
-            amp = float(anomaly[oy, ox])
-            if kind == "ridge":
-                amp = abs(amp)
-            elif kind == "valley":
-                amp = -abs(amp)
-            elif kind == "plateau":
-                amp *= 0.35
-            elif kind == "scarp":
-                amp *= 0.8
-            relief_limit = max(256.0, abs(float(local_relief[oy, ox])) * 0.75)
-            amp = float(np.clip(amp, -relief_limit, relief_limit))
-            points = []
-            for distance in np.arange(0.0, length + 1.0, 8.0):
-                pos = np.array([sy, sx], dtype=np.float32)
-                pos += nvec * distance
-                py, px = float(pos[0]), float(pos[1])
-                iy, ix = int(round(py)), int(round(px))
-                if not (0 <= iy < h0.shape[0] and 0 <= ix < h0.shape[1]):
-                    break
-                if not active[iy, ix] and distance > 0.0:
-                    break
-                points.append((distance / max(length, 1.0), py, px))
-            guide_support_vertices += _add_ribbon(
-                source_sum, source_weight, active, owner_mask, points[1:2],
-                amp, base_weight, sigma, decay_fraction,
-            )
-
-    # Convolve all sparse semantic sources once. This keeps broad ribbons
-    # bounded by the window size instead of materializing one patch per sample.
-    kernel_area = 2.0 * np.pi * sigma * sigma
-    guide_sum = ndimage.gaussian_filter(
-        source_sum, sigma, mode="nearest"
-    ) * kernel_area
-    guide_weight = ndimage.gaussian_filter(
-        source_weight, sigma, mode="nearest"
-    ) * kernel_area
-    guide_value = h0.astype(np.float32, copy=True)
-    guided = guide_weight > 1e-6
-    guide_value[guided] += guide_sum[guided] / guide_weight[guided]
-    guide_weight[~active | owner_mask] = 0.0
-    guided &= guide_weight > 1e-6
-    guide_value[~np.isfinite(guide_value)] = h0[~np.isfinite(guide_value)]
-    return guide_value, guide_weight.astype(np.float32), {
-        "feature_seed_counts": feature_seed_counts,
-        "guide_support_vertices": int(guide_support_vertices),
-        "guide_source_points": int(guide_support_vertices),
-        "guide_vertices": int(guided.sum()),
-        "guide_weight_max": float(guide_weight.max(initial=0.0)),
+    macro_band, macro_report = _solve_band(
+        "macro", target_macro, owner_macro, ctx, generated,
+        float(c["macro_width_cells"]), c,
+    )
+    macro = cleaned.astype(np.float32, copy=True)
+    macro[generated] += (macro_band - target_macro)[generated]
+    meso_band, meso_report = _solve_band(
+        "meso", target_meso, owner_meso, ctx, generated,
+        float(c["meso_width_cells"]), c,
+    )
+    macro_meso = macro.astype(np.float32, copy=True)
+    macro_meso[generated] += (meso_band - target_meso)[generated]
+    for field in (cleaned, macro, macro_meso):
+        field[owner_mask] = h0[owner_mask]
+    return {
+        "stage3": h0.astype(np.float32, copy=True),
+        "cleaned": cleaned,
+        "macro": macro,
+        "macro_meso": macro_meso,
+    }, {
+        "owner_vertices": int(owner_mask.sum()),
+        "generated_vertices": int(generated.sum()),
+        "fine_keep_at_seam": float(c["fine_keep_at_seam"]),
+        "fine_restore_distance_cells": float(c["fine_restore_distance_cells"]),
+        "macro": macro_report,
+        "meso": meso_report,
     }
 
 

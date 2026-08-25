@@ -1,10 +1,10 @@
-"""Run structural continuation, effective erosion, and final seam lock.
+"""Run multiscale structural continuation, effective erosion, and final seam lock.
 
 The command consumes the real Stage-3 local field for one configured region,
-analyzes authoritative owner terrain, solves sparse semantic guides, routes
-owner inflow plus generated rainfall, and writes a standardized local review
-sheet. It never rewrites the upstream harmonic field and never writes a
-global snapshot for each cycle.
+analyzes authoritative owner terrain, solves complete macro/meso harmonic
+bands, routes owner inflow plus generated rainfall, and writes a standardized
+local review sheet. Run A stops after the structural fields and never enters
+hydrology, erosion, or final-lock code.
 """
 
 from __future__ import annotations
@@ -28,8 +28,7 @@ from procgen.terrain_erosion import erode_field  # noqa: E402
 from procgen.terrain_features import analyze_owner_features  # noqa: E402
 from procgen.terrain_hydrology import priority_flood_routing_surface  # noqa: E402
 from procgen.terrain_structure import (  # noqa: E402
-    build_structural_guides,
-    solve_screened_structure,
+    build_multiscale_structural_fields,
 )
 from procgen.terrainfield import (  # noqa: E402
     load_config,
@@ -130,23 +129,85 @@ def _comparison_sheet(paths: list[tuple[str, Path]], out_path: Path) -> None:
     sheet.save(out_path)
 
 
+def _load_stage3_field(cfg: dict, ctx: dict, region: str) -> np.ndarray:
+    solve_dir = _resolve(cfg["paths"]["solve_out_dir"]) / "v3"
+    field_path = solve_dir / f"{region}_v3_field.npz"
+    if not field_path.exists():
+        raise FileNotFoundError(f"Stage-3 harmonic field missing: {field_path}")
+    with np.load(field_path) as z:
+        full = z["field"].astype(np.float32)
+    r0, r1, c0, c1 = map(int, ctx["win"])
+    return full[r0:r1, c0:c1].copy()
+
+
+def _run_a(cfg: dict, region: str, output_dir: str | None) -> int:
+    """Render Run A structural fields only; never enter hydrology or erosion."""
+    t0 = time.time()
+    ctx = build_context(ROOT, cfg, region)
+    field = _load_stage3_field(cfg, ctx, region)
+    review = _review_bbox(ctx)
+    default_out = _resolve(cfg["paths"]["solve_out_dir"]) / "v3" / "run_a_multiscale_tr"
+    out_dir = _resolve(output_dir) if output_dir else default_out
+    out_dir.mkdir(parents=True, exist_ok=True)
+    render_paths: dict[str, str] = {}
+
+    def save_run_a(title: str, stage_field: np.ndarray, suffix: str) -> None:
+        image = _render_local(stage_field, ctx, review, cfg)
+        path = out_dir / f"{region}_{suffix}.png"
+        save_shade_png(image, path, int(ctx["render"]["px_per_vertex"]), title=title)
+        render_paths[suffix] = str(path)
+
+    owner_analysis = np.where(ctx["owner_mask"], ctx["owner_field"], np.nan)
+    structure_cfg = dict(cfg.get("structure", {}))
+    features = analyze_owner_features(
+        owner_analysis, ctx["owner_mask"], structure_cfg
+    )
+    fields, structure_report = build_multiscale_structural_fields(
+        field, ctx, features, structure_cfg
+    )
+    save_run_a("Run A Stage-3 harmonic base", fields["stage3"], "stage3_base")
+    save_run_a("Run A cleaned fine-detail field", fields["cleaned"], "cleaned_fine")
+    save_run_a("Run A macro continuation", fields["macro"], "macro_continuation")
+    save_run_a(
+        "Run A macro plus meso continuation",
+        fields["macro_meso"],
+        "macro_meso_continuation",
+    )
+    metrics = {
+        "run": "A",
+        "region": region,
+        "review_bbox_vertices": list(review),
+        "features": features["feature_counts"],
+        "structure": structure_report,
+        "artifacts": render_paths,
+        "erosion_run": False,
+        "final_lock_run": False,
+        "timings": {"total_s": round(time.time() - t0, 1)},
+    }
+    with open(out_dir / f"{region}_run_a_metrics.json", "w", encoding="utf-8") as fh:
+        json.dump(metrics, fh, indent=2, default=lambda value: int(value))
+    print(json.dumps(metrics, indent=2, default=lambda value: int(value)))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default=str(ROOT / "configs" / "tamriel_reworked_v1.json"))
     ap.add_argument("--region", default="tr_vvardenfell_wall")
+    ap.add_argument("--run-a", action="store_true", help="render structural Run A only")
+    ap.add_argument("--output-dir", default=None, help="Run A output directory override")
     args = ap.parse_args()
     t0 = time.time()
     cfg = load_config(_resolve(args.config))
+    if args.run_a:
+        return _run_a(cfg, args.region, args.output_dir)
     ctx = build_context(ROOT, cfg, args.region)
-    solve_dir = _resolve(cfg["paths"]["solve_out_dir"]) / "v3"
-    field_path = solve_dir / f"{args.region}_v3_field.npz"
-    if not field_path.exists():
-        print(f"FAILURE: Stage-3 harmonic field missing: {field_path}")
+    try:
+        field = _load_stage3_field(cfg, ctx, args.region)
+    except FileNotFoundError as exc:
+        print(f"FAILURE: {exc}")
         return 1
-    with np.load(field_path) as z:
-        full = z["field"].astype(np.float32)
-    r0, r1, c0, c1 = map(int, ctx["win"])
-    field = full[r0:r1, c0:c1].copy()
+    solve_dir = _resolve(cfg["paths"]["solve_out_dir"]) / "v3"
     review = _review_bbox(ctx)
     out_dir = solve_dir / "erosion_structural"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -171,18 +232,10 @@ def main() -> int:
     features = analyze_owner_features(
         owner_analysis, ctx["owner_mask"], structure_cfg
     )
-    guide_value, guide_weight, guide_report = build_structural_guides(
+    structural_fields, structural_report = build_multiscale_structural_fields(
         field, ctx, features, structure_cfg
     )
-    structural_fixed = ctx["hard"].copy()
-    structural_fixed_values = ctx["hard_vals"].astype(np.float32, copy=True)
-    owner_fixed = ctx["owner_mask"] & ctx["smask"]
-    structural_fixed |= owner_fixed
-    structural_fixed_values[owner_fixed] = ctx["own_view"][owner_fixed]
-    structural, structural_report = solve_screened_structure(
-        field, ctx["smask"], structural_fixed, structural_fixed_values,
-        guide_value, guide_weight, structure_cfg,
-    )
+    structural = structural_fields["macro_meso"]
     structural_path = save_stage(
         "Structural continuation before erosion", structural,
         f"{args.region}_structural_pre_erosion.png",
@@ -243,7 +296,7 @@ def main() -> int:
     metrics = {
         "region": args.region,
         "features": features["feature_counts"],
-        "structure": {"guides": guide_report, "solve": structural_report},
+        "structure": structural_report,
         "erosion": erosion_report,
         "final_lock": lock_report,
         "seam_c0_max_gu": seam_c0,

@@ -63,6 +63,42 @@ def _normalized_gaussian(
     )
 
 
+def _masked_derivative(
+    field: np.ndarray,
+    valid: np.ndarray,
+    spacing: float,
+    axis: int,
+) -> np.ndarray:
+    """Differentiate without inventing values across the owner boundary."""
+    if axis not in (0, 1):
+        raise ValueError("masked derivative axis must be 0 or 1")
+    field = np.asarray(field, dtype=np.float32)
+    valid = np.asarray(valid, dtype=bool) & np.isfinite(field)
+    minus = np.zeros(valid.shape, dtype=bool)
+    plus = np.zeros(valid.shape, dtype=bool)
+    minus_slice = [slice(None), slice(None)]
+    plus_slice = [slice(None), slice(None)]
+    center_minus = [slice(None), slice(None)]
+    center_plus = [slice(None), slice(None)]
+    minus_slice[axis] = slice(1, None)
+    center_minus[axis] = slice(None, -1)
+    plus_slice[axis] = slice(None, -1)
+    center_plus[axis] = slice(1, None)
+    minus[tuple(minus_slice)] = valid[tuple(center_minus)]
+    plus[tuple(plus_slice)] = valid[tuple(center_plus)]
+
+    backward = np.roll(field, 1, axis=axis)
+    forward = np.roll(field, -1, axis=axis)
+    out = np.full(field.shape, np.nan, dtype=np.float32)
+    both = valid & minus & plus
+    only_minus = valid & minus & ~plus
+    only_plus = valid & ~minus & plus
+    out[both] = (forward[both] - backward[both]) / (2.0 * spacing)
+    out[only_minus] = (field[only_minus] - backward[only_minus]) / spacing
+    out[only_plus] = (forward[only_plus] - field[only_plus]) / spacing
+    return out
+
+
 def _robust_unit(field: np.ndarray, valid: np.ndarray, percentile: float) -> np.ndarray:
     positive = field[valid & np.isfinite(field) & (field > 0.0)]
     if positive.size == 0:
@@ -108,11 +144,16 @@ def analyze_owner_features(
     H64[~owner_mask] = np.nan
 
     spacing = 128.0
-    gy, gx = np.gradient(np.nan_to_num(H24, nan=0.0), spacing, spacing)
+    derivative_valid = owner_mask & np.isfinite(H24)
+    gy = _masked_derivative(H24, derivative_valid, spacing, axis=0)
+    gx = _masked_derivative(H24, derivative_valid, spacing, axis=1)
+    gradient_valid = np.isfinite(gx) & np.isfinite(gy)
     sigma_tensor = float(c["tensor_sigma_verts"])
-    Jxx = ndimage.gaussian_filter(gx * gx, sigma_tensor, mode="nearest")
-    Jyy = ndimage.gaussian_filter(gy * gy, sigma_tensor, mode="nearest")
-    Jxy = ndimage.gaussian_filter(gx * gy, sigma_tensor, mode="nearest")
+    gx_finite = np.nan_to_num(gx, nan=0.0)
+    gy_finite = np.nan_to_num(gy, nan=0.0)
+    Jxx = _normalized_gaussian(gx_finite * gx_finite, gradient_valid, sigma_tensor)
+    Jyy = _normalized_gaussian(gy_finite * gy_finite, gradient_valid, sigma_tensor)
+    Jxy = _normalized_gaussian(gx_finite * gy_finite, gradient_valid, sigma_tensor)
     tensor_mean = 0.5 * (Jxx + Jyy)
     tensor_radius = np.sqrt(
         np.maximum(0.0, 0.25 * (Jxx - Jyy) ** 2 + Jxy * Jxy)
@@ -128,16 +169,15 @@ def analyze_owner_features(
     # Tensor major axis is the gradient normal; rotate it to the elongated
     # terrain direction so guide curves follow ridges and valley floors.
     orientation = 0.5 * np.arctan2(2.0 * Jxy, Jxx - Jyy) + np.pi / 2.0
+    orientation[~owner_mask] = 0.0
+    coherence[~owner_mask] = 0.0
 
-    dxx = ndimage.gaussian_filter(
-        np.nan_to_num(H24, nan=0.0), sigma_tensor, order=(0, 2), mode="nearest"
-    ) / (spacing * spacing)
-    dyy = ndimage.gaussian_filter(
-        np.nan_to_num(H24, nan=0.0), sigma_tensor, order=(2, 0), mode="nearest"
-    ) / (spacing * spacing)
-    dxy = ndimage.gaussian_filter(
-        np.nan_to_num(H24, nan=0.0), sigma_tensor, order=(1, 1), mode="nearest"
-    ) / (spacing * spacing)
+    dxx = _masked_derivative(gx, np.isfinite(gx), spacing, axis=1)
+    dyy = _masked_derivative(gy, np.isfinite(gy), spacing, axis=0)
+    dxy = _masked_derivative(gx, np.isfinite(gx), spacing, axis=0)
+    dxx = np.nan_to_num(dxx, nan=0.0)
+    dyy = np.nan_to_num(dyy, nan=0.0)
+    dxy = np.nan_to_num(dxy, nan=0.0)
     hmean = 0.5 * (dxx + dyy)
     hradius = np.sqrt(np.maximum(0.0, 0.25 * (dxx - dyy) ** 2 + dxy * dxy))
     eig_lo = hmean - hradius
@@ -180,7 +220,8 @@ def analyze_owner_features(
         shoreline, iterations=max(1, int(float(c["coastal_band_verts"])))
     ) & land
 
-    slope24 = np.hypot(gx, gy)
+    slope24 = np.hypot(gx_finite, gy_finite)
+    slope24[~owner_mask] = 0.0
     elevation_values = H64[land]
     slope_values = slope24[land]
     elevation_cut = (
