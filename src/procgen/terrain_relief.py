@@ -32,6 +32,9 @@ Invariants (enforced and self-checked by :func:`selfcheck`)
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import numpy as np
 from scipy import ndimage
 
@@ -47,6 +50,11 @@ DEFAULTS = {
     "sigma_regional_verts": 64.0,
     "prominence_ref_percentile": 90.0,
 }
+
+
+def relief_config_hash(cfg: dict) -> str:
+    payload = json.dumps(cfg.get("terrain_relief", {}), sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def smootherstep(t):

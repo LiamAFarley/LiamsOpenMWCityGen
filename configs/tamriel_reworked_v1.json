@@ -131,14 +131,18 @@
         ],
         "review_margin_cells": 6,
         "seam_crop_margin_cells": 2,
-        "seam_crop_bbox_cells": [-22, -29, -12, -14]
+        "seam_crop_bbox_cells": [
+          -22,
+          -29,
+          -12,
+          -14
+        ]
       }
     },
     "v3": {
       "blend_cells_max": 10.0,
       "blend_width_min_cells": 2.0,
       "blend_width_max_cells": 10.0,
-      "max_blend_grade_gu_per_cell": 2500.0,
       "band_edge_tolerance_gu": 0.001,
       "relief_npz": "output/mapdata/terrain/tamriel_reworked/solved/v3/relief/relief_scaled_field.npz",
       "surface": {
@@ -147,7 +151,17 @@
         "gradient_weight": 6.0,
         "owner_halo_cells": 2.0,
         "cg_tol": 0.0001,
-        "cg_maxiter": 400.0
+        "cg_maxiter": 400.0,
+        "slope_weight": 25.0,
+        "boundary_weight": 1000000.0
+      },
+      "max_blend_grade_gu_per_cell": 2500.0,
+      "quality": {
+        "max_first_edge_drop_gu": 2500.0,
+        "slope_residual_fail_gu": 200.0,
+        "profile_count": 64.0,
+        "profile_in_verts": 16.0,
+        "profile_out_verts": 8.0
       }
     }
   },
@@ -245,7 +259,7 @@
     "prominence_strength": 0.0,
     "sigma_regional_verts": 64.0,
     "prominence_ref_percentile": 90.0,
-    "gentle_end_fraction": 0.3,
+    "gentle_end_fraction": 0.15,
     "gentle_gain": 1.5
   }
 }

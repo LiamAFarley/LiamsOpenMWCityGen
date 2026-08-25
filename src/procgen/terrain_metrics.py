@@ -76,3 +76,47 @@ def curvature_jump(field: np.ndarray, own_view: np.ndarray,
     return {"count": int(ok.sum()),
             "p90": round(float(np.percentile(d, 90)), 2),
             "max": round(float(d.max()), 2)}
+
+def normal_profiles(field: np.ndarray, own_view: np.ndarray,
+                    seam_v: np.ndarray, nx: np.ndarray, ny: np.ndarray,
+                    count: int = 64, in_verts: int = 16,
+                    out_verts: int = 8) -> dict:
+    """Height profiles across the seam at evenly sampled seam vertices.
+
+    For each sampled vertex: owner heights for out_verts going outward and
+    generated heights for in_verts going inward, plus the first-edge drop
+    |gen(1) - gen(0)| — the numeric signature of a one-vertex cliff.
+    """
+    ys, xs = np.nonzero(seam_v)
+    if ys.size == 0:
+        return {"profiles": [], "max_first_edge_drop": 0.0}
+    order = np.argsort(ys * field.shape[1] + xs)
+    pick = np.linspace(0, ys.size - 1, min(count, ys.size)).astype(int)
+    profiles = []
+    max_drop = 0.0
+    for p in pick:
+        y, x = int(ys[order[p]]), int(xs[order[p]])
+        nyv, nxv = float(ny[y, x]), float(nx[y, x])
+        if nyv == 0.0 and nxv == 0.0:
+            continue
+        dy, dx = int(round(nyv)), int(round(nxv))
+        owner = []
+        for k in range(out_verts, 0, -1):
+            r, c = y - dy * k, x - dx * k
+            owner.append(float(own_view[r, c])
+                         if (0 <= r < field.shape[0] and 0 <= c < field.shape[1]
+                             and np.isfinite(own_view[r, c])) else np.nan)
+        gen = []
+        for k in range(0, in_verts + 1):
+            r, c = y + dy * k, x + dx * k
+            gen.append(float(field[r, c])
+                       if (0 <= r < field.shape[0] and 0 <= c < field.shape[1]
+                           and np.isfinite(field[r, c])) else np.nan)
+        drop = (abs(gen[1] - gen[0])
+                if len(gen) > 1 and np.isfinite(gen[0]) and np.isfinite(gen[1])
+                else 0.0)
+        max_drop = max(max_drop, drop)
+        profiles.append({"vertex": [y, x], "owner_out": owner,
+                         "gen_in": gen, "first_edge_drop": round(drop, 1)})
+    return {"profiles": profiles,
+            "max_first_edge_drop_gu": round(max_drop, 1)}

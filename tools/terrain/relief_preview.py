@@ -47,7 +47,8 @@ from procgen.terrainfield import (  # noqa: E402
     render_split_window,
 )
 from procgen import terrainstyle as ts  # noqa: E402
-from procgen import terrain_relief as tr  # noqa: E402
+from procgen import terrain_relief as tr
+from procgen.terrain_relief import relief_config_hash  # noqa: E402
 
 
 def _resolve(root: Path, value: str) -> Path:
@@ -183,6 +184,7 @@ def main() -> int:
     save_shade_png(crop, outdir / f"{args.region}_relief_{int(relief_cfg['max_gain'])}x.png",
                    ppv, title=f"{args.region} AFTER relief ({int(relief_cfg['max_gain'])}x)")
     np.savez_compressed(outdir / "relief_scaled_field.npz", field=scaled_max,
+                        relief_cfg_hash=relief_config_hash(relief_cfg),
                         gx0=np.int32(meta["gx0"]), gy0=np.int32(meta["gy0"]))
     curve_plot(info_by_gain, outdir / "relief_response_curve.png")
 
