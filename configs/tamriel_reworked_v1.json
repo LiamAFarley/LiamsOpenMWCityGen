@@ -1,0 +1,251 @@
+{
+  "version": "v1",
+  "sources": [
+    {
+      "name": "mw",
+      "role": "owner",
+      "path": "C:/Program Files (x86)/Steam/steamapps/common/Morrowind/Data Files/Morrowind.esm"
+    },
+    {
+      "name": "bm",
+      "role": "owner",
+      "path": "C:/Program Files (x86)/Steam/steamapps/common/Morrowind/Data Files/Bloodmoon.esm"
+    },
+    {
+      "name": "tr",
+      "role": "owner",
+      "path": "C:/Modding/OpenMWOverhaul/one-day-morrowind-modernization/Landmasses/TamrielRebuilt/00 Core/TR_Mainland.esm"
+    },
+    {
+      "name": "sky",
+      "role": "owner",
+      "path": "C:/Modding/OpenMWOverhaul/custom/SHOTN/Sky_Main.esm"
+    },
+    {
+      "name": "cyr",
+      "role": "owner",
+      "path": "C:/Modding/OpenMWOverhaul/custom/ProjectCyrodil/Cyr_Main.esm"
+    },
+    {
+      "name": "tam",
+      "role": "base",
+      "path": "C:/Modding/OpenMWOverhaul/custom/SHOTN/tamriel.esm"
+    }
+  ],
+  "paths": {
+    "corpus_npz": "output/mapdata/terrain/tamriel_reworked/corpus_v1.npz",
+    "corpus_manifest": "output/mapdata/terrain/tamriel_reworked/corpus_v1.manifest.json",
+    "seam_atlas_json": "output/mapdata/terrain/tamriel_reworked/seam_atlas_v1.json",
+    "review_crops_dir": "output/mapdata/terrain/tamriel_reworked/review_crops",
+    "solve_out_dir": "output/mapdata/terrain/tamriel_reworked/solved",
+    "output_esm": "output/esps/tamriel_reworked.esm"
+  },
+  "solve": {
+    "seed": 20260824,
+    "coarse_factor": 8,
+    "blend_cells": 6,
+    "fade_verts": 48,
+    "octaves": 7,
+    "persistence": 0.55,
+    "lacunarity": 2.0,
+    "ridge_weight": 0.55,
+    "amp_slope_coef": 1.2,
+    "amp_relief_coef": 0.3,
+    "amp_base_gu": 60,
+    "amp_max_gu": 1600,
+    "style_match": 1.0,
+    "massif_octaves": 3,
+    "massif_amp_gu": 500,
+    "carve_coef_gu": 320,
+    "carve_fade_verts": 128,
+    "carve_max_gu": 800,
+    "carve_slope_min_gu_per_vert": 60,
+    "carve_accum_cap": 8192,
+    "panel": {
+      "blend_cells": 10,
+      "hybrid_carry_cells": 2.5,
+      "bands": [
+        2,
+        4,
+        8,
+        16,
+        32,
+        64
+      ],
+      "warp_strength": 24,
+      "clone_patch_by_band": {
+        "2": 64,
+        "4": 64,
+        "8": 128,
+        "16": 128,
+        "32": 256,
+        "64": 256
+      },
+      "clone_feather_by_band": {
+        "2": 24,
+        "4": 24,
+        "8": 40,
+        "16": 40,
+        "32": 64,
+        "64": 64
+      },
+      "clone_step_div": 2,
+      "erode_iters": 8,
+      "erode_inner": 4,
+      "erode_k": 0.002,
+      "erode_m": 0.8,
+      "erode_creep": 0.1,
+      "erode_cap_per_iter": 60,
+      "erode_seed_sigma_scale": 0.45
+    },
+    "regions": {
+      "tr_vvardenfell_wall": {
+        "cluster_ids": [
+          159,
+          160,
+          161,
+          162,
+          164,
+          165,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          178,
+          179,
+          181,
+          182,
+          183,
+          184,
+          186,
+          187,
+          190,
+          191,
+          193,
+          194,
+          199,
+          200
+        ],
+        "review_margin_cells": 6,
+        "seam_crop_margin_cells": 2,
+        "seam_crop_bbox_cells": [-22, -29, -12, -14]
+      }
+    },
+    "v3": {
+      "blend_cells_max": 10.0,
+      "blend_width_min_cells": 2.0,
+      "blend_width_max_cells": 10.0,
+      "max_blend_grade_gu_per_cell": 2500.0,
+      "band_edge_tolerance_gu": 0.001,
+      "relief_npz": "output/mapdata/terrain/tamriel_reworked/solved/v3/relief/relief_scaled_field.npz",
+      "surface": {
+        "target_weight": 1.0,
+        "smooth_weight": 1.0,
+        "gradient_weight": 6.0,
+        "owner_halo_cells": 2.0,
+        "cg_tol": 0.0001,
+        "cg_maxiter": 400.0
+      }
+    }
+  },
+  "render": {
+    "azimuth_deg": 315.0,
+    "altitude_deg": 45.0,
+    "vertical_exaggeration": 1.0,
+    "px_per_vertex": 2,
+    "hypsometric_stops_gu": [
+      [
+        -2500,
+        30,
+        40,
+        80
+      ],
+      [
+        0,
+        70,
+        110,
+        160
+      ],
+      [
+        60,
+        92,
+        140,
+        92
+      ],
+      [
+        3000,
+        190,
+        180,
+        120
+      ],
+      [
+        9000,
+        150,
+        110,
+        80
+      ],
+      [
+        16000,
+        230,
+        230,
+        235
+      ],
+      [
+        24000,
+        255,
+        255,
+        255
+      ]
+    ]
+  },
+  "atlas": {
+    "probe_depth_cells": 6,
+    "crop_margin_cells": 6,
+    "classification": {
+      "void_owner_frac": 0.5,
+      "matched_max_delta_gu": 16,
+      "cliff_slope_gu_per_cell": 300,
+      "cliff_min_delta_gu": 400,
+      "plateau_min_delta_gu": 600,
+      "smooth_min_decay_cells": 2.5
+    }
+  },
+  "expected_counts_v1": {
+    "deleted": 3252,
+    "retained": 28834,
+    "seam_edges": 531,
+    "seam_tam_cells": 446,
+    "lands": {
+      "mw": 1390,
+      "bm": 150,
+      "tr": 2592,
+      "sky": 297,
+      "cyr": 510,
+      "tam": 32086
+    },
+    "peaks_gu": {
+      "mw": 18952,
+      "bm": 4800,
+      "tr": 21168,
+      "sky": 10528,
+      "cyr": 12096,
+      "tam": 21272
+    }
+  },
+  "terrain_relief": {
+    "enabled": true,
+    "sea_level_gu": 0.0,
+    "max_gain": 3.0,
+    "sigma_macro_verts": 16.0,
+    "ramp_end_percentile": 99.5,
+    "shore_protect_height_gu": 768.0,
+    "prominence_strength": 0.0,
+    "sigma_regional_verts": 64.0,
+    "prominence_ref_percentile": 90.0,
+    "gentle_end_fraction": 0.3,
+    "gentle_gain": 1.5
+  }
+}

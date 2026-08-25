@@ -1,0 +1,32 @@
+{
+  "region": "tr_vvardenfell_wall",
+  "surface": {
+    "unknowns": 1830188,
+    "cg_status": 0,
+    "data_weight_near_seam": 0.05,
+    "slope_rows": 2356,
+    "blend_width_cells_min": 2.0,
+    "blend_width_cells_max": 10.0,
+    "band_edge_max_abs_gu": 0.0
+  },
+  "seam_c0_max_gu": 0.0,
+  "seam_c1_normals": {
+    "count": 2362,
+    "median": 58.907,
+    "p90": 248.319,
+    "p99": 286.468,
+    "max": 302.683
+  },
+  "curvature_jump": {
+    "count": 2490,
+    "p90": 489.5,
+    "max": 777.08
+  },
+  "band_edge_max_abs_gu": 0.0,
+  "timings": {
+    "context_s": 6.5,
+    "solve_s": 25.6,
+    "metrics_s": 0.3,
+    "total_s": 44.0
+  }
+}

@@ -38,10 +38,10 @@ from scipy import ndimage
 DEFAULTS = {
     "sea_level_gu": 0.0,
     "max_gain": 3.0,
+    "gentle_end_fraction": 0.30,
+    "gentle_gain": 1.5,
+    "ramp_end_percentile": 99.5,
     "sigma_macro_verts": 16.0,
-    "ramp_start_gu": 1024.0,
-    "ramp_start_percentile": 25.0,
-    "ramp_end_percentile": 95.0,
     "shore_protect_height_gu": 768.0,
     "prominence_strength": 0.0,
     "sigma_regional_verts": 64.0,
@@ -81,15 +81,23 @@ def relief_scale(field: np.ndarray, cfg: dict | None = None) -> tuple[np.ndarray
     pos = valid & (D > 0.0)
     if not pos.any():
         return field.copy(), {"note": "no positive land; identity", **{k: 0.0 for k in ("E0", "E1")}}
-    E1 = float(np.percentile(D[pos], float(c["ramp_end_percentile"])))
-    E0 = max(float(c["ramp_start_gu"]),
-             float(np.percentile(D[pos], float(c["ramp_start_percentile"]))))
-    if E1 <= E0:
-        E1 = E0 + 1.0
-
+    # Two-stage response (user ruling): gentle gain up to ~30% of the
+    # original max elevation, then accelerate to max_gain by the top of
+    # the range. Mid-elevation terrain stays close to its original relief.
     max_gain = float(c["max_gain"])
-    t = (D - E0) / (E1 - E0)
-    gain = 1.0 + (max_gain - 1.0) * smootherstep(t)
+    if max_gain <= 1.0:
+        return field.copy(), {"note": "max_gain <= 1; identity",
+                              "max_gain": max_gain}
+    g1 = min(float(c.get("gentle_gain", 1.5)), max_gain - 1e-6)
+    frac = float(c.get("gentle_end_fraction", 0.30))
+    d_max = float(D[pos].max())
+    E_gentle = max(frac * d_max, 1.0)
+    E_full = max(float(np.percentile(D[pos], float(c["ramp_end_percentile"]))),
+                 E_gentle + 1.0)
+
+    gain = 1.0 + (g1 - 1.0) * smootherstep(D / E_gentle)
+    t2 = np.clip((D - E_gentle) / max(E_full - E_gentle, 1.0), 0.0, 1.0)
+    gain = gain + (max_gain - g1) * smootherstep(t2)
     delta = (gain - 1.0) * D
 
     strength = float(c.get("prominence_strength", 0.0))
@@ -110,12 +118,17 @@ def relief_scale(field: np.ndarray, cfg: dict | None = None) -> tuple[np.ndarray
     out[~valid] = np.nan
 
     # fine-RMS retention on a central subsample window (cheap audit)
+    def _gain_at(d_val: float) -> float:
+        g = 1.0 + (g1 - 1.0) * float(smootherstep(min(d_val / E_gentle, 1.0)))
+        t2v = min(max((d_val - E_gentle) / max(E_full - E_gentle, 1.0), 0.0), 1.0)
+        return g + (max_gain - g1) * float(smootherstep(t2v))
+
     info = {
-        "E0_gu": round(E0, 1),
-        "E1_gu": round(E1, 1),
+        "E_gentle_gu": round(E_gentle, 1),
+        "E_full_gu": round(E_full, 1),
+        "gentle_gain": g1,
         "max_gain": max_gain,
-        "gain_at_D_p50": round(float(1.0 + (max_gain - 1.0) * float(
-            smootherstep(np.clip((np.percentile(D[pos], 50) - E0) / (E1 - E0), 0, 1)))), 3),
+        "gain_at_D_p50": round(_gain_at(float(np.percentile(D[pos], 50))), 3),
         "underwater_max_delta_gu": 0.0,
     }
     try:
@@ -169,7 +182,7 @@ def selfcheck(cfg: dict | None = None) -> dict:
     B = ndimage.gaussian_filter(np.where(np.isfinite(H), H, 0.0),
                                 float(c["sigma_macro_verts"]), mode="nearest")
     D = np.clip(B - sea, 0.0, None)
-    E0, E1 = info["E0_gu"], info["E1_gu"]
+    E0, E1 = info["E_gentle_gu"], info["E_full_gu"]
     t = np.clip((D - E0) / max(E1 - E0, 1e-6), 0.0, 1.0)
     disp = np.abs(out3 - H)
     land = H > sea
@@ -188,7 +201,9 @@ def selfcheck(cfg: dict | None = None) -> dict:
     res["monotone_response"] = bool(mono and len(means) > 5)
 
     res["c1_ramp_ends"] = bool(
-        abs(info["gain_at_D_p50"]) <= 3.0 and E1 > E0)
+        abs(info["gain_at_D_p50"]) <= float(c["max_gain"]) and E1 > E0)
+    res["gentle_stage_gain"] = bool(
+        info["gentle_gain"] < float(c["max_gain"]))
     res["no_nan_propagation"] = bool(
         np.array_equal(np.isfinite(out3), np.isfinite(H)))
     res["shore_small_displacement"] = bool(

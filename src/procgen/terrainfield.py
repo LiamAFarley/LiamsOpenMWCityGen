@@ -373,7 +373,12 @@ def save_shade_png(shade: np.ndarray, path: str | Path, px_per_vertex: int = 2,
     draw = ImageDraw.Draw(img)
     if overlay is not None:
         overlay(draw, px_per_vertex)
+    # TES3 vertex rows run south->north; flip so renders are north-up like
+    # standard Tamriel maps. Overlays were drawn in array space and flip
+    # with the terrain; the title is drawn after the flip in screen space.
+    img = img.transpose(Image.FLIP_TOP_BOTTOM)
     if title:
+        draw = ImageDraw.Draw(img)
         draw.text((8, 8), title, fill=(255, 80, 80))
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
