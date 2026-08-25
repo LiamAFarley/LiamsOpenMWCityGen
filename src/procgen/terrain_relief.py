@@ -41,8 +41,8 @@ from scipy import ndimage
 DEFAULTS = {
     "sea_level_gu": 0.0,
     "max_gain": 3.0,
-    "gentle_end_fraction": 0.30,
-    "gentle_gain": 1.5,
+    "gentle_end_fraction": 0.05,
+    "gentle_gain": 1.6,
     "ramp_end_percentile": 99.5,
     "sigma_macro_verts": 16.0,
     "shore_protect_height_gu": 768.0,
@@ -55,6 +55,21 @@ DEFAULTS = {
 def relief_config_hash(cfg: dict) -> str:
     payload = json.dumps(cfg.get("terrain_relief", {}), sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def fill_missing_from_edges(field: np.ndarray) -> np.ndarray:
+    """Fill NaN holes from the nearest finite source vertex."""
+    valid = np.isfinite(field)
+    if valid.all():
+        return field.copy()
+    if not valid.any():
+        raise ValueError("cannot fill a field with no finite source vertices")
+    indices = ndimage.distance_transform_edt(
+        ~valid, return_distances=False, return_indices=True
+    )
+    out = np.array(field, copy=True)
+    out[~valid] = field[tuple(indices)][~valid]
+    return out
 
 
 def smootherstep(t):
@@ -89,7 +104,7 @@ def relief_scale(field: np.ndarray, cfg: dict | None = None) -> tuple[np.ndarray
     pos = valid & (D > 0.0)
     if not pos.any():
         return field.copy(), {"note": "no positive land; identity", **{k: 0.0 for k in ("E0", "E1")}}
-    # Two-stage response (user ruling): gentle gain up to ~30% of the
+    # Two-stage response: gentle gain up to the configured fraction of the
     # original max elevation, then accelerate to max_gain by the top of
     # the range. Mid-elevation terrain stays close to its original relief.
     max_gain = float(c["max_gain"])

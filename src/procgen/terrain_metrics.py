@@ -24,9 +24,12 @@ def seam_c0(field: np.ndarray, own_view: np.ndarray, seam_v: np.ndarray) -> floa
 
 
 def band_edge_continuity(field: np.ndarray, target: np.ndarray,
-                         smask: np.ndarray, seam_v: np.ndarray) -> float:
-    """Maximum solved/target difference on the non-owner outer band edge."""
-    edge = smask & ~ndimage.binary_erosion(smask) & ~seam_v
+                         smask: np.ndarray, seam_v: np.ndarray,
+                         outer_v: np.ndarray | None = None) -> float:
+    """Maximum solved/target difference on the Dirichlet outer edge."""
+    edge = (outer_v if outer_v is not None
+            else smask & ~ndimage.binary_erosion(smask) & ~seam_v)
+    edge = edge & ~seam_v
     ok = edge & np.isfinite(field) & np.isfinite(target)
     return float(np.abs(field[ok] - target[ok]).max()) if ok.any() else 0.0
 
@@ -118,16 +121,16 @@ def normal_profiles(field: np.ndarray, own_view: np.ndarray,
     """Height profiles across the seam at evenly sampled seam vertices.
 
     For each sampled vertex: owner heights for out_verts going outward and
-    generated heights for in_verts going inward, plus the first-edge drop
-    |gen(1) - gen(0)| — the numeric signature of a one-vertex cliff.
+    generated heights for in_verts going inward. The reported maximum is the
+    largest normal step across the sampled profile, not just the first edge.
     """
     ys, xs = np.nonzero(seam_v)
     if ys.size == 0:
-        return {"profiles": [], "max_first_edge_drop": 0.0}
+        return {"profiles": [], "max_normal_step_gu": 0.0}
     order = np.argsort(ys * field.shape[1] + xs)
     pick = np.linspace(0, ys.size - 1, min(count, ys.size)).astype(int)
     profiles = []
-    max_drop = 0.0
+    max_normal_step = 0.0
     for p in pick:
         y, x = int(ys[order[p]]), int(xs[order[p]])
         nyv, nxv = float(ny[y, x]), float(nx[y, x])
@@ -146,11 +149,13 @@ def normal_profiles(field: np.ndarray, own_view: np.ndarray,
             gen.append(float(field[r, c])
                        if (0 <= r < field.shape[0] and 0 <= c < field.shape[1]
                            and np.isfinite(field[r, c])) else np.nan)
-        drop = (abs(gen[1] - gen[0])
-                if len(gen) > 1 and np.isfinite(gen[0]) and np.isfinite(gen[1])
-                else 0.0)
-        max_drop = max(max_drop, drop)
+        steps = [abs(gen[i + 1] - gen[i])
+                 for i in range(len(gen) - 1)
+                 if np.isfinite(gen[i]) and np.isfinite(gen[i + 1])]
+        local_max_step = max(steps) if steps else 0.0
+        max_normal_step = max(max_normal_step, local_max_step)
         profiles.append({"vertex": [y, x], "owner_out": owner,
-                         "gen_in": gen, "first_edge_drop": round(drop, 1)})
+                         "gen_in": gen,
+                         "max_normal_step_gu": round(local_max_step, 1)})
     return {"profiles": profiles,
-            "max_first_edge_drop_gu": round(max_drop, 1)}
+            "max_normal_step_gu": round(max_normal_step, 1)}

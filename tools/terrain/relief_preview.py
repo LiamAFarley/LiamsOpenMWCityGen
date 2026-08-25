@@ -48,7 +48,10 @@ from procgen.terrainfield import (  # noqa: E402
 )
 from procgen import terrainstyle as ts  # noqa: E402
 from procgen import terrain_relief as tr
-from procgen.terrain_relief import relief_config_hash  # noqa: E402
+from procgen.terrain_relief import (  # noqa: E402
+    fill_missing_from_edges,
+    relief_config_hash,
+)
 
 
 def _resolve(root: Path, value: str) -> Path:
@@ -127,7 +130,7 @@ def main() -> int:
     with open(_resolve(ROOT, cfg["paths"]["corpus_manifest"]), encoding="utf-8") as fh:
         manifest = json.load(fh)
     base_code = manifest["source_names"].index(manifest["base_source"]) + 1
-    tam_h = arrays["tam_h"]
+    tam_h = fill_missing_from_edges(arrays["tam_h"])
     oth_view_full = np.where(np.isfinite(arrays["oth_h"]), arrays["oth_h"],
                              tam_h).astype(np.float32)
 
@@ -184,7 +187,7 @@ def main() -> int:
     save_shade_png(crop, outdir / f"{args.region}_relief_{int(relief_cfg['max_gain'])}x.png",
                    ppv, title=f"{args.region} AFTER relief ({int(relief_cfg['max_gain'])}x)")
     np.savez_compressed(outdir / "relief_scaled_field.npz", field=scaled_max,
-                        relief_cfg_hash=relief_config_hash(relief_cfg),
+                         relief_cfg_hash=relief_config_hash(cfg),
                         gx0=np.int32(meta["gx0"]), gy0=np.int32(meta["gy0"]))
     curve_plot(info_by_gain, outdir / "relief_response_curve.png")
 

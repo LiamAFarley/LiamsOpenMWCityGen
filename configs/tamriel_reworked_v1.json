@@ -146,18 +146,14 @@
       "band_edge_tolerance_gu": 0.001,
       "relief_npz": "output/mapdata/terrain/tamriel_reworked/solved/v3/relief/relief_scaled_field.npz",
       "surface": {
-        "target_weight": 1.0,
-        "smooth_weight": 1.0,
-        "gradient_weight": 6.0,
-        "owner_halo_cells": 2.0,
-        "cg_tol": 0.0001,
-        "cg_maxiter": 400.0,
-        "slope_weight": 25.0,
-        "boundary_weight": 1000000.0
+        "cg_tol": 1E-06,
+        "cg_maxiter": 5000.0,
+        "anchor_conflict_tolerance_gu": 32.0,
+        "anchor_conflict_policy": "skip"
       },
       "max_blend_grade_gu_per_cell": 2500.0,
       "quality": {
-        "max_first_edge_drop_gu": 2500.0,
+        "max_normal_step_gu": 2500.0,
         "slope_residual_fail_gu": 200.0,
         "profile_count": 64.0,
         "profile_in_verts": 16.0,
@@ -259,7 +255,7 @@
     "prominence_strength": 0.0,
     "sigma_regional_verts": 64.0,
     "prominence_ref_percentile": 90.0,
-    "gentle_end_fraction": 0.15,
-    "gentle_gain": 1.5
+    "gentle_end_fraction": 0.05,
+    "gentle_gain": 1.6
   }
 }

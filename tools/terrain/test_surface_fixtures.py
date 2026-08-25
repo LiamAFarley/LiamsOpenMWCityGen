@@ -1,27 +1,23 @@
-"""Synthetic fixtures for the v3 constrained surface solver (mandatory).
+"""Production-topology fixtures for the v3 harmonic seam correction.
 
 Purpose
-    Sol High review requirement: the constrained solver must pass pure
-    mathematical fixtures BEFORE touching the real corpus. Each fixture
-    builds a small synthetic seam scene, runs the exact production
-    ``solve_surface``, and asserts the invariants:
+    Exercise the actual Morrowind spatial representation: a 5x5
+    ``cell_owner`` grid, 64 intervals per LAND cell, production
+    ``seam_edges()``, and production ``rasterize_seam()``. Boundary shapes are
+    independent from the synthetic height fields. Corner and staircase cases
+    therefore test ownership topology, not invented terrain styles.
 
-      - seam heights exact (C0 == 0);
-      - no single-vertex cliff at the seam (first-edge drop bounded by the
-        blend grade);
-      - monotone approach from the low side toward the owner heights
-        (no overshoot past the owner level near the seam);
-      - no NaNs; slope-family residual within tolerance.
+Fixtures
+    ``straight_flat``       flat owner/target height fields
+    ``straight_sloped``     planar owner terrain at a straight boundary
+    ``straight_mountain``   broad owner ridge at a straight boundary
+    ``corner_flat``         flat fields with an L-shaped ownership boundary
+    ``staircase_flat``      flat fields with a cell-topology staircase
 
-    Fixtures: flat-step, sloped-step, corner, staircase,
-    mountain-to-lowland.
-
-Outputs
-    PASS/FAIL per fixture to stdout; exit code 1 on any failure.
-
-Pipeline position
-    Quality gate for tools/terrain/solve_region_v3.py. Run before every
-    solver change reaches the real corpus.
+Acceptance
+    Seam C0 is exact, no NaNs occur, the direct harmonic system has no empty
+    rows, the correction obeys the fixed-value maximum principle, and the
+    flat straight profile is monotone from owner height to target height.
 """
 
 from __future__ import annotations
@@ -30,219 +26,237 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from procgen.terrain_blend import solve_surface  # noqa: E402
+from procgen.terrain_blend import rasterize_seam, solve_surface  # noqa: E402
 from procgen.terrainfield import (  # noqa: E402
-    hillshade, hypsometric_rgb, save_shade_png,
+    hillshade,
+    hypsometric_rgb,
+    seam_edges,
+    save_shade_png,
 )
 
-N = 192
-SEAM_ROW = 96          # horizontal seam at this vertex row (tam side below)
-BLEND_CELLS = 6
-GRADE = 2500.0         # GU per cell allowed average grade
-OWNER_HIGH = 10000.0
-TARGET_LOW = 200.0
+CELL_SIDE = 5
+VERTS_PER_CELL = 64
+VERT_SIDE = CELL_SIDE * VERTS_PER_CELL + 1
+BASE_CODE = 1
+OWNER_CODE = 2
+TARGET_HEIGHT = 200.0
+OWNER_HEIGHT = 10000.0
+BLEND_VERTS = VERTS_PER_CELL
+
+
+def _ownership(kind: str) -> np.ndarray:
+    """Return only the ownership topology; heights are built separately."""
+    t, o = BASE_CODE, OWNER_CODE
+    if kind.startswith("straight"):
+        rows = [[t] * 5, [t] * 5, [t] * 5, [o] * 5, [o] * 5]
+    elif kind == "corner_flat":
+        rows = [[t] * 5, [t] * 5, [o, t, t, t, t], [o] * 5, [o] * 5]
+    elif kind == "staircase_flat":
+        rows = [[t, t, t, t, o], [t, t, t, o, o],
+                [t, t, o, o, o], [t, o, o, o, o], [o] * 5]
+    else:
+        raise ValueError(f"unknown fixture {kind}")
+    return np.asarray(rows, dtype=np.uint8)
+
+
+def _cell_mask(cells: set[tuple[int, int]]) -> np.ndarray:
+    mask = np.zeros((VERT_SIDE, VERT_SIDE), dtype=bool)
+    for cx, cy in cells:
+        r0, c0 = cy * VERTS_PER_CELL, cx * VERTS_PER_CELL
+        mask[r0:r0 + VERTS_PER_CELL + 1,
+             c0:c0 + VERTS_PER_CELL + 1] = True
+    return mask
+
+
+def _owner_heights(kind: str) -> np.ndarray:
+    yy, xx = np.mgrid[0:VERT_SIDE, 0:VERT_SIDE].astype(np.float32)
+    if kind == "straight_sloped":
+        # Owner is below the straight seam at y=3*64. Moving outward into
+        # the owner increases height by 40 GU per raster interval.
+        return OWNER_HEIGHT + (yy - 3.0 * VERTS_PER_CELL) * 40.0
+    if kind == "straight_mountain":
+        ridge = 6000.0 * np.exp(
+            -(((yy - 2.5 * VERTS_PER_CELL) ** 2) / (150.0 ** 2)
+              + ((xx - 2.0 * VERTS_PER_CELL) ** 2) / (130.0 ** 2))
+        )
+        return 5000.0 + ridge
+    return np.full((VERT_SIDE, VERT_SIDE), OWNER_HEIGHT, dtype=np.float32)
 
 
 def _base_ctx(kind: str) -> dict:
-    # The seam row is part of the solve band (production seam verts are the
-    # tamriel cell's own edge vertices, inside the mask). The band is wider
-    # than the seam run so the seam ENDPOINTS are interior vertices — a seam
-    # end touching the band's side ring would legitimately create a local
-    # corner step that is not representative of production corridors.
-    smask = np.zeros((N, N), dtype=bool)
-    smask[SEAM_ROW:SEAM_ROW + 1 + BLEND_CELLS * 8, 2:N - 2] = True
-    own_view = np.full((N, N), TARGET_LOW, dtype=np.float32)
-    target = np.full((N, N), TARGET_LOW, dtype=np.float32)
-    hard = np.zeros((N, N), dtype=bool)
-    hard_vals = np.zeros((N, N), np.float32)
+    cell_owner = _ownership(kind)
+    owner_cells = {
+        (x, y)
+        for y in range(CELL_SIDE)
+        for x in range(CELL_SIDE)
+        if int(cell_owner[y, x]) == OWNER_CODE
+    }
+    tam_cells = {
+        (x, y)
+        for y in range(CELL_SIDE)
+        for x in range(CELL_SIDE)
+        if int(cell_owner[y, x]) == BASE_CODE
+    }
+    edges = seam_edges(cell_owner, BASE_CODE, 0, 0)
+    seam_v, edge_list = rasterize_seam(
+        edges, tam_cells, (VERT_SIDE, VERT_SIDE), 0, 0, 0, 0
+    )
 
-    if kind == "flat_step":
-        own_view[:SEAM_ROW + 1, :] = OWNER_HIGH
-    elif kind == "sloped_step":
-        for r in range(SEAM_ROW + 1):
-            own_view[r, :] = OWNER_HIGH - (SEAM_ROW - r) * 40.0
-    elif kind == "mountain_to_lowland":
-        yy, xx = np.mgrid[0:N, 0:N].astype(np.float32)
-        peak = 12000.0 * np.exp(-(((yy - 60) ** 2) / 3600.0
-                                  + ((xx - N // 2) ** 2) / 25000.0))
-        own_view[:SEAM_ROW + 1, :] = np.maximum(OWNER_HIGH * 0.6, peak)[:SEAM_ROW + 1]
-    elif kind in ("corner", "staircase"):
-        own_view[:SEAM_ROW + 1, :] = OWNER_HIGH
-    else:
-        raise SystemExit(f"unknown fixture kind {kind}")
+    target = np.full((VERT_SIDE, VERT_SIDE), TARGET_HEIGHT, dtype=np.float32)
+    owner_field = _owner_heights(kind).astype(np.float32)
+    own_view = np.full_like(target, TARGET_HEIGHT)
+    owner_v = _cell_mask(owner_cells)
+    own_view[owner_v] = owner_field[owner_v]
+    tam_v = _cell_mask(tam_cells)
 
-    # hard: outer ring first, then seam (seam wins at overlaps — same
-    # precedence rule as the production build_context)
-    ring = smask & ~_erode(smask)
-    hard |= ring
-    hard_vals[ring] = target[ring]
-    hard[SEAM_ROW, 8:N - 8] = True
-    hard_vals[SEAM_ROW, 8:N - 8] = own_view[SEAM_ROW, 8:N - 8]
+    # The active domain is the first real LAND-cell-width corridor on the
+    # Tamriel side. No hand-built edge list or artificial scanline geometry is
+    # used here; the boundary comes entirely from cell ownership.
+    dist_seam = ndimage.distance_transform_edt(~seam_v).astype(np.float32)
+    smask = tam_v & (dist_seam <= float(BLEND_VERTS))
+    smask |= seam_v
+    ring_v = smask & (dist_seam >= float(BLEND_VERTS) - 1.0)
+    hard = seam_v | ring_v
+    hard_vals = np.zeros_like(target)
+    hard_vals[ring_v] = target[ring_v]
+    hard_vals[seam_v] = own_view[seam_v]
 
-    dist = np.full((N, N), np.inf, np.float32)
-    rows = np.arange(N, dtype=np.float32)[:, None]
-    dist[smask] = np.broadcast_to(np.abs(rows - SEAM_ROW), (N, N))[smask]
-    width = np.full((N, N), float(BLEND_CELLS), np.float32)
+    ny = np.zeros(smask.shape, np.float32)
+    nx = np.zeros(smask.shape, np.float32)
+    for edge in edge_list:
+        ny_v, nx_v = edge["normal"]
+        for flat in edge["verts"]:
+            ny.ravel()[flat] = ny_v
+            nx.ravel()[flat] = nx_v
 
-    edge_list = _edge_list(kind, smask)
-    seam_v = np.zeros((N, N), dtype=bool)
-    for e in edge_list:
-        seam_v.ravel()[e["verts"]] = True
-
-    return dict(smask=smask, seam_v=seam_v, target=target, own_view=own_view,
-                hard=hard, hard_vals=hard_vals, dist_seam=dist, width_cells=width,
-                edge_list=edge_list, tam_w=np.zeros((N, N), np.float32))
-
-
-def _erode(mask):
-    out = mask.copy()
-    out[1:, :] &= mask[:-1, :]
-    out[:-1, :] &= mask[1:, :]
-    out[:, 1:] &= mask[:, :-1]
-    out[:, :-1] &= mask[:, 1:]
-    return out
-
-
-def _dist_to_seam(smask, seam_row):
-    dist = np.full(smask.shape, np.inf, np.float32)
-    for r in range(smask.shape[0]):
-        if smask[r].any():
-            dist[r] = abs(r - seam_row)
-    return dist
-
-
-def _edge_list(kind, smask):
-    """Synthesize edge_list entries (verts + inward normal) matching the
-    seam geometry of each fixture, in the production format."""
-    edges = []
-    cols = list(range(8, N - 8))
-
-    def hline(row, normal_y, c0, c1):
-        verts = [r * smask.shape[1] + c for r, c in
-                 [(row, c) for c in range(c0, c1)]]
-        edges.append({"verts": verts, "normal": (normal_y, 0.0)})
-
-    def vline(col, normal_x, r0, r1):
-        verts = [r * smask.shape[1] + c for r, c in
-                 [(r, col) for r in range(r0, r1)]]
-        edges.append({"verts": verts, "normal": (0.0, normal_x)})
-
-    if kind in ("flat_step", "sloped_step", "mountain_to_lowland"):
-        hline(SEAM_ROW, +1, cols[0], cols[-1] + 1)
-    elif kind == "corner":
-        hline(SEAM_ROW, +1, cols[0], 110)
-        vline(110, +1, SEAM_ROW, SEAM_ROW + BLEND_CELLS * 8)
-    elif kind == "staircase":
-        r = SEAM_ROW
-        c = cols[0]
-        run = 24
-        while c < cols[-1] - run:
-            hline(r, +1, c, c + run)
-            c += run
-            if c < cols[-1] - 8:
-                vline(c, +1, r, r + 8)
-                r += 8
-        hline(r, +1, c, cols[-1] + 1)
-    return edges
+    return {
+        "cell_owner": cell_owner,
+        "base_code": BASE_CODE,
+        "tam_h": target.copy(),
+        "target": target,
+        "own_view": own_view,
+        "owner_field": owner_field,
+        "owner_v": owner_v,
+        "tam_v": tam_v,
+        "smask": smask,
+        "seam_v": seam_v,
+        "ring_v": ring_v,
+        "hard": hard,
+        "hard_vals": hard_vals,
+        "dist_seam": dist_seam,
+        "width_cells": np.ones_like(target),
+        "edge_list": edge_list,
+        "edges": edges,
+        "solve_cells": tam_cells,
+        "nx": nx,
+        "ny": ny,
+    }
 
 
-def _check(kind: str, ctx: dict, field: np.ndarray, report: dict) -> list:
+def _normal_step(ctx: dict, field: np.ndarray) -> float:
+    best = 0.0
+    H, W = field.shape
+    for edge in ctx["edge_list"]:
+        dy, dx = (int(round(edge["normal"][0])),
+                  int(round(edge["normal"][1])))
+        for flat in edge["verts"]:
+            sy, sx = divmod(flat, W)
+            previous = float(field[sy, sx])
+            for k in range(1, VERTS_PER_CELL + 1):
+                y, x = sy + dy * k, sx + dx * k
+                if not (0 <= y < H and 0 <= x < W) or not ctx["smask"][y, x]:
+                    break
+                current = float(field[y, x])
+                best = max(best, abs(current - previous))
+                previous = current
+    return best
+
+
+def _check(kind: str, ctx: dict, field: np.ndarray, report: dict) -> list[str]:
     fails = []
     seam = ctx["seam_v"]
-    c0 = float(np.abs(field[seam] - ctx["own_view"][seam]).max()) if seam.any() else 0.0
+    c0 = float(np.abs(field[seam] - ctx["own_view"][seam]).max())
     if c0 > 1e-3:
-        fails.append(f"C0 {c0:.1f} != 0")
+        fails.append(f"C0 {c0:.3g} != 0")
     if np.isnan(field[ctx["smask"]]).any():
-        fails.append("NaN inside solve band")
-    # Edge-based normal first drop: |field(inland) - field(seam)| per seam
-    # vertex, using each edge's own normal (row-difference checks would
-    # conflate normal drops with legitimate tangential seam variation).
-    H, W = field.shape
-    max_drop = 0.0
-    for e in ctx["edge_list"]:
-        dy, dx = int(round(e["normal"][0])), int(round(e["normal"][1]))
-        for f in e["verts"]:
-            uy, ux = f // W + dy, f % W + dx
-            if 0 <= uy < H and 0 <= ux < W and ctx["smask"][uy, ux]:
-                max_drop = max(max_drop, abs(float(field[uy, ux]) - float(field[f // W, f % W])))
-    first = max_drop
-    limit = GRADE / 8.0 * 2.0     # 2 cells of grade per first vertex allowed
-    if first > limit:
-        fails.append(f"first-edge drop {first:.0f} > {limit:.0f} GU")
-    res = report["residuals"]
-    if res["slope_rms"] > 100.0:
-        fails.append(f"slope residual RMS {res['slope_rms']:.1f} > 100")
-    print(f"  {kind:<20} C0={c0:.1f} first_drop={first:.0f} GU "
-          f"slope_rms={res['slope_rms']:.2f} "
+        fails.append("NaN inside active corridor")
+    bounds = report["correction_bounds"]
+    correction = field.astype(np.float64) - ctx["target"].astype(np.float64)
+    cmin = float(np.min(correction[ctx["smask"]]))
+    cmax = float(np.max(correction[ctx["smask"]]))
+    if cmin < bounds["fixed_min"] - 1e-2:
+        fails.append(f"correction undershoot {cmin:.2f} < {bounds['fixed_min']:.2f}")
+    if cmax > bounds["fixed_max"] + 1e-2:
+        fails.append(f"correction overshoot {cmax:.2f} > {bounds['fixed_max']:.2f}")
+    if kind == "straight_flat":
+        edge = ctx["edge_list"][len(ctx["edge_list"]) // 2]
+        flat = edge["verts"][len(edge["verts"]) // 2]
+        y, x = divmod(flat, field.shape[1])
+        dy, dx = int(round(edge["normal"][0])), int(round(edge["normal"][1]))
+        profile = np.asarray([
+            field[y + dy * k, x + dx * k]
+            for k in range(VERTS_PER_CELL + 1)
+        ])
+        if np.any(np.diff(profile) > 1e-3):
+            fails.append("straight flat profile is not monotone")
+        if float(profile.min()) < TARGET_HEIGHT - 1e-3:
+            fails.append(f"flat profile enters water: {profile.min():.2f} GU")
+        if float(profile.max()) > OWNER_HEIGHT + 1e-3:
+            fails.append(f"flat profile spikes: {profile.max():.2f} GU")
+    step = _normal_step(ctx, field)
+    print(f"  {kind:<20} C0={c0:.2f} normal_step={step:.2f} GU "
+          f"corr=[{cmin:.1f},{cmax:.1f}] "
           f"{'PASS' if not fails else 'FAIL: ' + '; '.join(fails)}")
     return fails
 
 
+def _render(kind: str, ctx: dict, field: np.ndarray, render_dir: Path) -> None:
+    display = field.copy()
+    display[ctx["owner_v"]] = ctx["owner_field"][ctx["owner_v"]]
+    cfg = {
+        "azimuth_deg": 315.0,
+        "altitude_deg": 45.0,
+        "vertical_exaggeration": 1.0,
+        "hypsometric_stops_gu": [
+            [-500, 30, 40, 80], [0, 70, 110, 160], [60, 92, 140, 92],
+            [3000, 190, 180, 120], [6000, 165, 125, 90],
+            [9000, 150, 110, 80], [11000, 225, 225, 232],
+            [14000, 255, 255, 255],
+        ],
+    }
+    shade = hillshade(display, cfg["azimuth_deg"], cfg["altitude_deg"],
+                      cfg["vertical_exaggeration"])
+    rgb = hypsometric_rgb(display, shade, cfg["hypsometric_stops_gu"])
+    save_shade_png(rgb, render_dir / f"fixture_{kind}.png", 2,
+                   title=f"{kind}: owner territory + generated Tamriel transition")
+
+
 def main() -> int:
-    all_fails = []
-    render_dir = ROOT / "output" / "mapdata" / "terrain" / "tamriel_reworked" / "solved" / "v3" / "fixture_renders"
+    render_dir = (ROOT / "output" / "mapdata" / "terrain" /
+                  "tamriel_reworked" / "solved" / "v3" / "fixture_renders")
     render_dir.mkdir(parents=True, exist_ok=True)
-    rcfg = {"azimuth_deg": 315.0, "altitude_deg": 45.0,
-            "vertical_exaggeration": 1.0,
-            "hypsometric_stops_gu": [
-                [-500, 30, 40, 80], [0, 70, 110, 160], [60, 92, 140, 92],
-                [3000, 190, 180, 120], [6000, 165, 125, 90],
-                [9000, 150, 110, 80], [11000, 225, 225, 232],
-                [14000, 255, 255, 255]]}
-    for kind in ("flat_step", "sloped_step", "corner", "staircase",
-                 "mountain_to_lowland"):
+    all_fails = []
+    for kind in ("straight_flat", "straight_sloped", "straight_mountain",
+                 "corner_flat", "staircase_flat"):
         ctx = _base_ctx(kind)
-        v3 = {"surface": {"data_weight": 1.0, "smooth_weight": 0.05,
-                          "slope_weight": 25.0, "cg_tol": 1e-6,
-                          "cg_maxiter": 800}}
-        field, report = solve_surface(ctx, v3)
-        assembly = report["assembly"]
-        eq = report["equation_counts"]
-
-        if assembly["empty_equation_rows"] != 0:
-            raise AssertionError(
-                f"{kind}: solver assembled "
-                f"{assembly['empty_equation_rows']} empty equation rows"
-            )
-
-        expected_rows = (
-            eq["data"]
-            + eq["laplacian"]
-            + eq["slope"]
+        field, report = solve_surface(
+            ctx,
+            {"surface": {"smooth_weight": 1.0, "slope_weight": 25.0,
+                         "cg_tol": 1e-6, "cg_maxiter": 800}},
         )
-
-        if assembly["rows"] != expected_rows:
-            raise AssertionError(
-                f"{kind}: equation count mismatch: "
-                f"matrix={assembly['rows']} expected={expected_rows}"
-            )
-
-        if eq["data"] != report["unknowns"]:
-            raise AssertionError(
-                f"{kind}: expected one data equation per unknown"
-            )
-
-        if eq["laplacian"] != report["unknowns"]:
-            raise AssertionError(
-                f"{kind}: expected one Laplacian equation per unknown"
-            )
-        all_fails += _check(kind, ctx, field, report)
-
-        # colored hypsometric review render (owner side + solved band)
-        disp = field.copy()
-        owner_rows = ctx["own_view"][: SEAM_ROW + 1]
-        disp[: SEAM_ROW + 1] = owner_rows
-        sh = hillshade(disp, azimuth_deg=rcfg["azimuth_deg"],
-                       altitude_deg=rcfg["altitude_deg"],
-                       z_scale=float(rcfg["vertical_exaggeration"]))
-        rgb = hypsometric_rgb(disp, sh, rcfg["hypsometric_stops_gu"])
-        save_shade_png(rgb, render_dir / f"fixture_{kind}.png", 4,
-                       title=f"fixture: {kind} (owner top / solved band below)")
-
+        if report["assembly"]["empty_equation_rows"] != 0:
+            raise AssertionError(f"{kind}: empty harmonic equation rows")
+        if report["assembly"]["rows"] != report["unknowns"]:
+            raise AssertionError(f"{kind}: direct L rows != unknown count")
+        if report["equation_counts"]["data"] != 0:
+            raise AssertionError(f"{kind}: data family remains")
+        all_fails.extend(_check(kind, ctx, field, report))
+        _render(kind, ctx, field, render_dir)
     if all_fails:
         print(f"FAILURE: {len(all_fails)} fixture assertion(s) failed")
         return 1

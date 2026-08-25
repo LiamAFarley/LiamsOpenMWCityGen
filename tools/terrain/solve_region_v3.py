@@ -1,13 +1,12 @@
-"""v3 seam synthesis driver — Milestone 2 rev2 (surface solve, no erosion).
+"""v3 seam synthesis driver — Milestone 2 harmonic surface solve.
 
 Purpose
     Thin driver for the revised v3 constrained surface solve (Sol High
     review sequence, steps 2-4/7/9): builds the shared context
-    (terrain_blend.build_context — edge-rasterized seam, corridor seeds,
-    per-edge slope constraints), solves the screened-Poisson surface
-    through the family-tagged equation assembler, enforces the quality
-    gates (C0 exactness, band-edge continuity, max first-edge drop, slope
-    residual), and renders the review set including a zoomed wall crop and
+    (terrain_blend.build_context — production edge-rasterized seam and active
+    corridor), solves a direct harmonic correction system, enforces the
+    quality gates (C0 exactness, outer-edge continuity, maximum normal step),
+    and renders the review set including a zoomed wall crop and
     seam-normal height profiles.
 
 Inputs
@@ -99,10 +98,10 @@ def main() -> int:
     target_full = to_full(ctx["target"])
 
     edge_error = tmet.band_edge_continuity(field, ctx["target"], ctx["smask"],
-                                           ctx["seam_v"])
+                                           ctx["seam_v"], ctx["ring_v"])
     edge_tol = float(v3.get("band_edge_tolerance_gu", 1e-3))
     slope_res_fail = float(quality.get("slope_residual_fail_gu", 200.0))
-    drop_fail = float(quality.get("max_first_edge_drop_gu", 2500.0))
+    drop_fail = float(quality.get("max_normal_step_gu", 2500.0))
     slope_res = sinfo["residuals"].get("slope_rms", 0.0)
 
     failures = []
@@ -112,9 +111,13 @@ def main() -> int:
         failures.append(f"band-edge continuity {edge_error:.3g} > {edge_tol}")
     if slope_res > slope_res_fail:
         failures.append(f"slope residual RMS {slope_res:.1f} > {slope_res_fail}")
-    max_drop = prof["max_first_edge_drop_gu"]
+    max_drop = prof["max_normal_step_gu"]
     if max_drop > drop_fail:
-        failures.append(f"max first-edge drop {max_drop:.0f} > {drop_fail}")
+        failures.append(f"max normal step {max_drop:.0f} > {drop_fail}")
+    if sinfo.get("anchor_conflicts"):
+        failures.append(
+            f"skipped {len(sinfo['anchor_conflicts'])} conflicting corner anchors"
+        )
 
     outdir = _resolve(ROOT, cfg["paths"]["solve_out_dir"]) / "v3"
     outdir.mkdir(parents=True, exist_ok=True)
@@ -192,7 +195,7 @@ def main() -> int:
         "seam_c1_normals": c1,
         "curvature_jump": curv,
         "band_edge_max_abs_gu": edge_error,
-        "max_first_edge_drop_gu": max_drop,
+        "max_normal_step_gu": max_drop,
         "normal_profiles": prof["profiles"],
         "quality_failures": failures,
         "timings": {"context_s": round(t_context, 1),
