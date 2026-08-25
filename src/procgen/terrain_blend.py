@@ -21,10 +21,15 @@ Invariants
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from pathlib import Path
 
 import numpy as np
+try:
+    import pyamg
+except ImportError:  # optional local acceleration for the Poisson solve
+    pyamg = None
 from scipy import ndimage, sparse
 from scipy.sparse.linalg import cg
 
@@ -144,6 +149,12 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     edges = seam_edges(cell_owner, base_code, gy0, gx0)
     retained = cell_owner == base_code
     blend = int(v3.get("blend_cells_max", 10))
+    outer_apron_cells = float(v3.get("outer_apron_cells", 1.0))
+    blend = max(
+        blend,
+        int(np.ceil(float(v3.get("blend_width_max_cells", 10.0))
+                    + outer_apron_cells)),
+    )
 
     cluster_boxes = []
     for cid in sorted(region["cluster_ids"]):
@@ -192,13 +203,13 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     c_hi = min(tam_h.shape[1], (bx1 - gx0) * 64 + 65 + pad * 64)
 
     solve_mask_full = _cell_vertex_mask(solve_cells, tam_h.shape, gy0, gx0)
-    smask = solve_mask_full[r_lo:r_hi, c_lo:c_hi]
+    solve_mask_base = solve_mask_full[r_lo:r_hi, c_lo:c_hi]
     tam_w = tam_h[r_lo:r_hi, c_lo:c_hi]
     target = target_full[r_lo:r_hi, c_lo:c_hi]
     own_view = own_full[r_lo:r_hi, c_lo:c_hi]
     oth_w = arrays["oth_h"][r_lo:r_hi, c_lo:c_hi]
     seam_v, edge_list = rasterize_seam(
-        edges, solve_cells, smask.shape, gy0, gx0, r_lo, c_lo
+        edges, solve_cells, solve_mask_base.shape, gy0, gx0, r_lo, c_lo
     )
     dist_seam = ndimage.distance_transform_edt(~seam_v)
 
@@ -207,40 +218,59 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     grade = float(v3.get("max_blend_grade_gu_per_cell", 2500.0))
     finite_target = np.where(np.isfinite(target), target, 0.0)
     loc_rel = np.abs(target - ndimage.uniform_filter(finite_target, 65))
-    loc_rel[~smask] = 0.0
-    lo_r = float(np.percentile(loc_rel[smask], 20)) if smask.any() else 0.0
-    hi_r = float(np.percentile(loc_rel[smask], 95)) if smask.any() else 1.0
+    loc_rel[~solve_mask_base] = 0.0
+    lo_r = (float(np.percentile(loc_rel[solve_mask_base], 20))
+            if solve_mask_base.any() else 0.0)
+    hi_r = (float(np.percentile(loc_rel[solve_mask_base], 95))
+            if solve_mask_base.any() else 1.0)
     rn = np.clip((loc_rel - lo_r) / max(hi_r - lo_r, 1e-6), 0.0, 1.0)
-    width_relief = wmin + (wmax - wmin) * rn
-    delta_seam = np.zeros(smask.shape, np.float32)
+    seam_width = np.full(solve_mask_base.shape, np.nan, dtype=np.float32)
+    seam_width[seam_v] = wmin
     seam_valid = seam_v & np.isfinite(own_view) & np.isfinite(target)
-    delta_seam[seam_valid] = np.abs(own_view[seam_valid] - target[seam_valid])
+    seam_delta = np.abs(own_view[seam_valid] - target[seam_valid])
+    seam_mismatch_width = seam_delta / max(grade, 1.0)
+    seam_relief_width = wmin + (wmax - wmin) * rn[seam_valid]
+    seam_width[seam_valid] = np.clip(
+        np.maximum(seam_mismatch_width, seam_relief_width),
+        wmin,
+        wmax,
+    )
     nearest = ndimage.distance_transform_edt(
         ~seam_v, return_distances=False, return_indices=True
     )
-    width_mismatch = delta_seam[tuple(nearest)] / max(grade, 1.0)
-    width_cells = np.clip(np.maximum(width_relief, width_mismatch), wmin, wmax)
-    smask = smask & (dist_seam <= width_cells * 64.0)
-    smask |= seam_v
+    requested_width_cells = np.clip(seam_width[tuple(nearest)], wmin, wmax)
+    solve_width_cells = np.minimum(
+        requested_width_cells + outer_apron_cells,
+        wmax + outer_apron_cells,
+    )
+    active_mask = solve_mask_base & (
+        dist_seam <= solve_width_cells * 64.0
+    )
+    active_mask |= seam_v
     # Pixelwise adaptive widths can leave one-pixel islands at diagonal
     # ownership corners. Keep only 4-connected components that contain seam
     # vertices; the harmonic operator itself is 4-neighbor coupled.
-    labels, _ = ndimage.label(smask, structure=ndimage.generate_binary_structure(2, 1))
+    labels, _ = ndimage.label(
+        active_mask,
+        structure=ndimage.generate_binary_structure(2, 1),
+    )
     seam_labels = np.unique(labels[seam_v])
     connected = np.isin(labels, seam_labels)
-    mask_islands_removed = int(np.count_nonzero(smask & ~connected))
-    smask = connected
+    mask_islands_removed = int(np.count_nonzero(active_mask & ~connected))
+    active_mask = connected
     # Only the distance-defined outer transition edge is Dirichlet. Lateral
     # edges of an irregular window are no-flux boundaries; fixing them to the
     # target would create artificial endpoint curls and anchor conflicts.
-    outer_v = smask & (dist_seam >= (width_cells * 64.0 - 1.0))
+    outer_v = active_mask & (
+        dist_seam >= (solve_width_cells * 64.0 - 1.0)
+    )
     hard = seam_v | outer_v
     hard_vals = np.zeros_like(target, dtype=np.float32)
     hard_vals[outer_v] = target[outer_v]
     hard_vals[seam_v] = own_view[seam_v]
 
-    ny = np.zeros(smask.shape, np.float32)
-    nx = np.zeros(smask.shape, np.float32)
+    ny = np.zeros(active_mask.shape, np.float32)
+    nx = np.zeros(active_mask.shape, np.float32)
     for edge in edge_list:
         ny_v, nx_v = edge["normal"]
         for flat in edge["verts"]:
@@ -250,10 +280,12 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     return dict(
         tam_h=tam_h, oth_h=arrays["oth_h"], cell_owner=cell_owner,
         base_code=base_code, gy0=gy0, gx0=gx0,
-        names=manifest["source_names"], smask=smask, tam_w=tam_w,
+        names=manifest["source_names"], smask=active_mask, tam_w=tam_w,
         target=target, own_view=own_view, oth_w=oth_w, seam_v=seam_v,
         ring_v=outer_v, dist_seam=dist_seam, hard=hard, hard_vals=hard_vals,
-        width_cells=width_cells, nx=nx, ny=ny, edge_list=edge_list,
+        width_cells=requested_width_cells,
+        solve_width_cells=solve_width_cells,
+        nx=nx, ny=ny, edge_list=edge_list,
         bbox=(bx0, by0, bx1, by1), win=(r_lo, r_hi, c_lo, c_hi),
         render=cfg["render"], region=region, region_name=region_name,
         edges=edges, solve_cells=solve_cells,
@@ -261,11 +293,17 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     )
 
 
-def solve_harmonic_correction(target: np.ndarray, active_mask: np.ndarray,
-                              fixed_mask: np.ndarray,
-                              fixed_final_height: np.ndarray,
-                              cg_tol: float = 1e-6,
-                              cg_maxiter: int = 800) -> tuple[np.ndarray, dict]:
+def solve_harmonic_correction(
+    target: np.ndarray,
+    active_mask: np.ndarray,
+    fixed_mask: np.ndarray,
+    fixed_final_height: np.ndarray,
+    *,
+    linear_solver: str = "amg_rs_cg",
+    cg_tol: float = 1e-6,
+    cg_maxiter: int = 200,
+    amg_max_coarse: int = 500,
+) -> tuple[np.ndarray, dict]:
     """Solve ``L_uu C_u = rhs`` directly for an additive correction.
 
     Neighbors outside ``active_mask`` are no-flux boundaries. Neighbors inside
@@ -292,6 +330,10 @@ def solve_harmonic_correction(target: np.ndarray, active_mask: np.ndarray,
         final[fixed] = fixed_final_height[fixed]
         return final.astype(np.float32), {
             "unknowns": 0, "cg_status": 0,
+            "linear_solver": linear_solver,
+            "cg_iterations": 0,
+            "solver_setup_s": 0.0,
+            "solver_solve_s": 0.0,
             "equation_counts": {"data": 0, "laplacian": 0, "slope": 0,
                                  "slope_anchors": 0,
                                  "boundary_eliminated": int(fixed.sum())},
@@ -357,10 +399,56 @@ def solve_harmonic_correction(target: np.ndarray, active_mask: np.ndarray,
     empty_rows = int(np.count_nonzero(np.diff(A.indptr) == 0))
     if empty_rows:
         raise AssertionError(f"harmonic system contains {empty_rows} empty rows")
-    diag = A.diagonal()
-    M = sparse.diags(1.0 / diag)
-    c, status = cg(A, rhs, x0=np.zeros(n), M=M,
-                   rtol=float(cg_tol), maxiter=int(cg_maxiter))
+    setup_t0 = time.perf_counter()
+    ml = None
+    if linear_solver == "amg_rs_cg":
+        if pyamg is None:
+            raise RuntimeError("linear_solver='amg_rs_cg' requires pyamg")
+        ml = pyamg.ruge_stuben_solver(
+            A,
+            max_coarse=int(amg_max_coarse),
+        )
+        M = ml.aspreconditioner(cycle="V")
+    elif linear_solver == "amg_sa_cg":
+        if pyamg is None:
+            raise RuntimeError("linear_solver='amg_sa_cg' requires pyamg")
+        ml = pyamg.smoothed_aggregation_solver(
+            A,
+            symmetry="symmetric",
+            max_coarse=int(amg_max_coarse),
+        )
+        M = ml.aspreconditioner(cycle="V")
+    elif linear_solver == "jacobi_cg":
+        diag = A.diagonal()
+        if np.any(diag <= 0.0):
+            bad = np.nonzero(diag <= 0.0)[0][:20]
+            raise ValueError(
+                "non-positive harmonic diagonal at "
+                f"{bad.tolist()}"
+            )
+        M = sparse.diags(1.0 / diag)
+    else:
+        raise ValueError(f"unknown linear_solver={linear_solver!r}")
+    solver_setup_s = time.perf_counter() - setup_t0
+
+    iterations = 0
+
+    def _cg_callback(_):
+        nonlocal iterations
+        iterations += 1
+
+    solve_t0 = time.perf_counter()
+    c, status = cg(
+        A,
+        rhs,
+        x0=np.zeros(n, dtype=np.float64),
+        M=M,
+        rtol=float(cg_tol),
+        atol=0.0,
+        maxiter=int(cg_maxiter),
+        callback=_cg_callback,
+    )
+    solver_solve_s = time.perf_counter() - solve_t0
     if status != 0:
         raise RuntimeError(f"harmonic CG failed with status {status}")
     if not np.all(np.isfinite(c)):
@@ -380,6 +468,11 @@ def solve_harmonic_correction(target: np.ndarray, active_mask: np.ndarray,
     }
     return final, {
         "unknowns": n, "cg_status": int(status),
+        "linear_solver": linear_solver,
+        "cg_iterations": int(iterations),
+        "solver_setup_s": round(solver_setup_s, 4),
+        "solver_solve_s": round(solver_solve_s, 4),
+        **({"amg_levels": int(len(ml.levels))} if ml is not None else {}),
         "equation_counts": {"data": 0, "laplacian": n, "slope": 0,
                              "slope_anchors": 0,
                              "boundary_eliminated": int(fixed.sum())},
@@ -408,16 +501,70 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     anchors = np.zeros_like(fixed, dtype=bool)
     anchor_values = np.zeros_like(target, dtype=np.float64)
     anchor_claims: dict[tuple[int, int], list[float]] = {}
+    edge_incidence: dict[int, list[tuple[int, int]]] = {}
+    for edge in ctx["edge_list"]:
+        normal = (
+            int(round(edge["normal"][0])),
+            int(round(edge["normal"][1])),
+        )
+        for flat in edge["verts"]:
+            edge_incidence.setdefault(int(flat), []).append(normal)
+    for flat in edge_incidence:
+        edge_incidence[flat] = list(dict.fromkeys(edge_incidence[flat]))
+    corner_vertices = {
+        flat: normals
+        for flat, normals in edge_incidence.items()
+        if len(normals) == 2
+        and normals[0][0] * normals[1][0]
+        + normals[0][1] * normals[1][1] == 0
+    }
+    corner_anchor_count = 0
+    corner_anchor_skipped = 0
+    corner_claims: dict[tuple[int, int], list[float]] = {}
     conflict_tol = float(surf.get("anchor_conflict_tolerance_gu", 0.0))
     conflict_policy = str(surf.get("anchor_conflict_policy", "error"))
     if conflict_policy not in {"error", "skip"}:
         raise ValueError(f"unknown anchor_conflict_policy: {conflict_policy}")
     fixed_conflict_spread = 0.0
     fixed_conflicts = []
+
+    for seam_flat, normals in corner_vertices.items():
+        sy, sx = divmod(seam_flat, target.shape[1])
+        (dy1, dx1), (dy2, dx2) = normals
+        oy1, ox1 = sy - dy1, sx - dx1
+        oy2, ox2 = sy - dy2, sx - dx2
+        uy, ux = sy + dy1 + dy2, sx + dx1 + dx2
+        if not (
+            0 <= oy1 < target.shape[0]
+            and 0 <= ox1 < target.shape[1]
+            and 0 <= oy2 < target.shape[0]
+            and 0 <= ox2 < target.shape[1]
+            and 0 <= uy < target.shape[0]
+            and 0 <= ux < target.shape[1]
+        ):
+            corner_anchor_skipped += 1
+            continue
+        if not (
+            active[uy, ux]
+            and np.isfinite(ctx["own_view"][oy1, ox1])
+            and np.isfinite(ctx["own_view"][oy2, ox2])
+        ):
+            corner_anchor_skipped += 1
+            continue
+        h_corner = float(fixed_final[sy, sx])
+        dh1 = h_corner - float(ctx["own_view"][oy1, ox1])
+        dh2 = h_corner - float(ctx["own_view"][oy2, ox2])
+        desired = h_corner + dh1 + dh2 - target[uy, ux]
+        corner_claims.setdefault((uy, ux), []).append(desired)
+        anchor_claims.setdefault((uy, ux), []).append(desired)
+        corner_anchor_count += 1
+
     for edge in ctx["edge_list"]:
         dy = int(round(edge["normal"][0]))
         dx = int(round(edge["normal"][1]))
         for flat in edge["verts"]:
+            if int(flat) in corner_vertices:
+                continue
             sy, sx = divmod(flat, target.shape[1])
             uy, ux = sy + dy, sx + dx
             oy, ox = sy - dy, sx - dx
@@ -443,7 +590,22 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
             anchor_claims.setdefault((uy, ux), []).append(desired)
     anchor_spread_max = 0.0
     anchor_conflicts = []
-    for (uy, ux), claims in anchor_claims.items():
+    for (uy, ux), all_claims in anchor_claims.items():
+        # The diagonal continuation owns its generated vertex. Adjacent
+        # one-dimensional anchors remain everywhere else, but their claims at
+        # this same diagonal point would recreate the corner collision.
+        claims = corner_claims.get((uy, ux), all_claims)
+        if fixed[uy, ux]:
+            existing = fixed_final[uy, ux] - target[uy, ux]
+            spread = max(abs(existing - value) for value in claims)
+            fixed_conflict_spread = max(fixed_conflict_spread, spread)
+            if spread > conflict_tol:
+                fixed_conflicts.append({
+                    "vertex": [int(uy), int(ux)],
+                    "spread_gu": float(spread),
+                    "claims_gu": [float(v) for v in claims],
+                })
+            continue
         spread = max(claims) - min(claims)
         anchor_spread_max = max(anchor_spread_max, spread)
         if spread > conflict_tol:
@@ -465,8 +627,10 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     fixed_final[anchors] = target[anchors] + anchor_values[anchors]
     field, report = solve_harmonic_correction(
         target, active, fixed, fixed_final,
+        linear_solver=str(surf.get("linear_solver", "amg_rs_cg")),
         cg_tol=float(surf.get("cg_tol", 1e-6)),
-        cg_maxiter=int(surf.get("cg_maxiter", 800)),
+        cg_maxiter=int(surf.get("cg_maxiter", 200)),
+        amg_max_coarse=int(surf.get("amg_max_coarse", 500)),
     )
     report["equation_counts"]["slope_anchors"] = int(anchors.sum())
     report["slope_rows"] = int(anchors.sum())
@@ -478,6 +642,9 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     report["anchor_conflict_policy"] = conflict_policy
     report["anchor_conflicts"] = anchor_conflicts + fixed_conflicts
     report["mask_islands_removed"] = int(ctx.get("mask_islands_removed", 0))
+    report["corner_vertices"] = int(len(corner_vertices))
+    report["corner_anchors"] = int(corner_anchor_count)
+    report["corner_anchors_skipped"] = int(corner_anchor_skipped)
     field[ctx["hard"]] = ctx["hard_vals"][ctx["hard"]]
     field[~active] = ctx["target"][~active]
     return field, report
