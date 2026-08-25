@@ -84,16 +84,18 @@ def _inward_slope(field: np.ndarray, seam_v: np.ndarray, nx: np.ndarray,
 
 def seam_c1_normals(field: np.ndarray, own_view: np.ndarray,
                     seam_v: np.ndarray, nx: np.ndarray, ny: np.ndarray) -> dict:
-    """|inward slope (ours) - inward slope (owner)| distribution.
+    """Oriented normal-slope mismatch distribution.
 
     Our side samples one vertex inward (sign +1); the owner side samples
-    one vertex outward (sign -1) of the same seam vertex."""
+    one vertex outward (sign -1). The raw owner delta points away from the
+    seam, so continuity compares ``ours + owner`` in the common normal
+    direction rather than subtracting the oppositely oriented deltas."""
     ours, ok_a = _inward_slope(field, seam_v, nx, ny, +1)
     theirs, ok_b = _inward_slope(own_view, seam_v, nx, ny, -1)
     ok = ok_a & ok_b & np.isfinite(ours) & np.isfinite(theirs)
     if not ok.any():
         return {"count": 0}
-    d = np.abs(ours[ok] - theirs[ok])
+    d = np.abs(ours[ok] + theirs[ok])
     return {"count": int(ok.sum()),
             "median": round(float(np.median(d)), 3),
             "p90": round(float(np.percentile(d, 90)), 3),
@@ -103,13 +105,14 @@ def seam_c1_normals(field: np.ndarray, own_view: np.ndarray,
 
 def curvature_jump(field: np.ndarray, own_view: np.ndarray,
                    seam_v: np.ndarray, nx: np.ndarray, ny: np.ndarray) -> dict:
+    """Compare curvature derivatives in the common seam-normal direction."""
     lap = lambda f: ndimage.laplace(np.where(np.isfinite(f), f, 0.0))
     ours, ok_a = _inward_slope(lap(field), seam_v, nx, ny, +1)
     theirs, ok_b = _inward_slope(lap(own_view), seam_v, nx, ny, -1)
     ok = ok_a & ok_b & np.isfinite(ours) & np.isfinite(theirs)
     if not ok.any():
         return {"count": 0}
-    d = np.abs(ours[ok] - theirs[ok])
+    d = np.abs(ours[ok] + theirs[ok])
     return {"count": int(ok.sum()),
             "p90": round(float(np.percentile(d, 90)), 2),
             "max": round(float(d.max()), 2)}

@@ -258,16 +258,27 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     connected = np.isin(labels, seam_labels)
     mask_islands_removed = int(np.count_nonzero(active_mask & ~connected))
     active_mask = connected
-    # Only the distance-defined outer transition edge is Dirichlet. Lateral
-    # edges of an irregular window are no-flux boundaries; fixing them to the
-    # target would create artificial endpoint curls and anchor conflicts.
-    outer_v = active_mask & (
-        dist_seam >= (solve_width_cells * 64.0 - 1.0)
+    # Every non-seam active vertex touching inactive terrain is an exact outer
+    # Dirichlet boundary. The distance edge is only the requested transition
+    # limit; treating the rest of the active-mask perimeter as no-flux would
+    # hand a nonzero correction directly back to untouched terrain.
+    active_interior = ndimage.binary_erosion(
+        active_mask,
+        structure=ndimage.generate_binary_structure(2, 1),
+        border_value=0,
     )
+    outer_v = active_mask & ~seam_v & ~active_interior
     hard = seam_v | outer_v
     hard_vals = np.zeros_like(target, dtype=np.float32)
     hard_vals[outer_v] = target[outer_v]
     hard_vals[seam_v] = own_view[seam_v]
+    unknown = active_mask & ~hard
+    if np.any(unknown & ~active_interior):
+        bad = np.argwhere(unknown & ~active_interior)[:20].tolist()
+        raise AssertionError(
+            "unknown harmonic vertices touch inactive terrain: "
+            f"{bad}"
+        )
 
     ny = np.zeros(active_mask.shape, np.float32)
     nx = np.zeros(active_mask.shape, np.float32)
@@ -521,6 +532,11 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     corner_anchor_count = 0
     corner_anchor_skipped = 0
     corner_claims: dict[tuple[int, int], list[float]] = {}
+    ordinary_seam_samples_eligible = 0
+    ordinary_anchors_created = 0
+    ordinary_anchors_skipped_inactive = 0
+    ordinary_anchors_skipped_invalid_owner = 0
+    ordinary_anchors_skipped_boundary = 0
     conflict_tol = float(surf.get("anchor_conflict_tolerance_gu", 0.0))
     conflict_policy = str(surf.get("anchor_conflict_policy", "error"))
     if conflict_policy not in {"error", "skip"}:
@@ -571,12 +587,20 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
             if not (0 <= uy < target.shape[0] and 0 <= ux < target.shape[1]
                     and 0 <= oy < target.shape[0] and 0 <= ox < target.shape[1]):
                 continue
-            if not active[uy, ux] or not np.isfinite(ctx["own_view"][oy, ox]):
+            if not np.isfinite(ctx["own_view"][oy, ox]):
+                ordinary_anchors_skipped_invalid_owner += 1
+                continue
+            ordinary_seam_samples_eligible += 1
+            if not active[uy, ux]:
+                ordinary_anchors_skipped_inactive += 1
                 continue
             h_seam = float(fixed_final[sy, sx])
             desired_height = h_seam + (h_seam - float(ctx["own_view"][oy, ox]))
             desired = desired_height - target[uy, ux]
             if fixed[uy, ux]:
+                if ctx["ring_v"][uy, ux]:
+                    ordinary_anchors_skipped_boundary += 1
+                    continue
                 existing = fixed_final[uy, ux] - target[uy, ux]
                 fixed_conflict_spread = max(
                     fixed_conflict_spread, abs(existing - desired)
@@ -588,6 +612,7 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
                     })
                 continue
             anchor_claims.setdefault((uy, ux), []).append(desired)
+            ordinary_anchors_created += 1
     anchor_spread_max = 0.0
     anchor_conflicts = []
     for (uy, ux), all_claims in anchor_claims.items():
@@ -645,6 +670,21 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     report["corner_vertices"] = int(len(corner_vertices))
     report["corner_anchors"] = int(corner_anchor_count)
     report["corner_anchors_skipped"] = int(corner_anchor_skipped)
+    report["ordinary_seam_samples_eligible"] = int(
+        ordinary_seam_samples_eligible
+    )
+    report["ordinary_anchors_created"] = int(ordinary_anchors_created)
+    report["ordinary_anchors_skipped_inactive"] = int(
+        ordinary_anchors_skipped_inactive
+    )
+    report["ordinary_anchors_skipped_invalid_owner"] = int(
+        ordinary_anchors_skipped_invalid_owner
+    )
+    report["ordinary_anchors_skipped_boundary"] = int(
+        ordinary_anchors_skipped_boundary
+    )
+    report["active_boundary_vertices"] = int(ctx["ring_v"].sum())
+    report["active_vertices"] = int(active.sum())
     field[ctx["hard"]] = ctx["hard_vals"][ctx["hard"]]
     field[~active] = ctx["target"][~active]
     return field, report

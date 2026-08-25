@@ -45,13 +45,50 @@ sys.path.insert(0, str(ROOT / "src"))
 from procgen.terrainfield import (  # noqa: E402
     load_config, render_split_window, save_shade_png,
 )
-from procgen.terrain_blend import build_context, load_target, solve_surface  # noqa: E402
+from procgen.terrain_blend import (  # noqa: E402
+    build_context,
+    load_target,
+    rasterize_seam,
+    solve_surface,
+)
 from procgen import terrain_metrics as tmet  # noqa: E402
 
 
 def _resolve(root: Path, value: str) -> Path:
     p = Path(value)
     return p if p.is_absolute() else root / p
+
+
+def _project_mask(mask: np.ndarray, ctx: dict,
+                  r_lo: int, r_hi: int, c_lo: int, c_hi: int) -> np.ndarray:
+    """Project a context-window mask into a review render window."""
+    out = np.zeros((r_hi - r_lo, c_hi - c_lo), dtype=bool)
+    cr0, cr1, cc0, cc1 = ctx["win"]
+    rr0, rr1 = max(r_lo, cr0), min(r_hi, cr1)
+    cc0_, cc1_ = max(c_lo, cc0), min(c_hi, cc1)
+    if rr1 <= rr0 or cc1_ <= cc0_:
+        return out
+    out[rr0 - r_lo:rr1 - r_lo, cc0_ - c_lo:cc1_ - c_lo] = \
+        mask[rr0 - cr0:rr1 - cr0, cc0_ - cc0:cc1_ - cc0]
+    return out
+
+
+def _boundary_overlay(base: np.ndarray, ctx: dict,
+                      all_seam_v: np.ndarray,
+                      r_lo: int, r_hi: int, c_lo: int, c_hi: int) -> tuple[np.ndarray, dict]:
+    """Color selected seams, active boundary, and unsolved seams on one crop."""
+    overlay = np.asarray(base).copy()
+    masks = [
+        (all_seam_v & ~ctx["seam_v"], (0, 220, 255), "cyan_unsolved_seam"),
+        (ctx["ring_v"], (255, 220, 0), "yellow_active_boundary"),
+        (ctx["seam_v"], (255, 40, 40), "red_selected_seam"),
+    ]
+    counts = {}
+    for mask, color, name in masks:
+        projected = _project_mask(mask, ctx, r_lo, r_hi, c_lo, c_hi)
+        counts[name] = int(projected.sum())
+        overlay[projected] = np.asarray(color, dtype=np.uint8)
+    return overlay, counts
 
 
 def main() -> int:
@@ -64,6 +101,19 @@ def main() -> int:
 
     tc = time.time()
     ctx = build_context(ROOT, cfg, args.region)
+    all_retained_cells = {
+        (int(x + ctx["gx0"]), int(y + ctx["gy0"]))
+        for y, x in zip(*np.nonzero(ctx["cell_owner"] == ctx["base_code"]))
+    }
+    all_seam_v, _ = rasterize_seam(
+        ctx["edges"],
+        all_retained_cells,
+        ctx["smask"].shape,
+        ctx["gy0"],
+        ctx["gx0"],
+        ctx["win"][0],
+        ctx["win"][2],
+    )
     t_context = time.time() - tc
 
     ts_ = time.time()
@@ -121,14 +171,22 @@ def main() -> int:
 
     outdir = _resolve(ROOT, cfg["paths"]["solve_out_dir"]) / "v3"
     outdir.mkdir(parents=True, exist_ok=True)
-    by0, by1 = ctx["bbox"][1], ctx["bbox"][3]
-    bx0, bx1 = ctx["bbox"][0], ctx["bbox"][2]
     gy0, gx0 = ctx["gy0"], ctx["gx0"]
-    mm = int(ctx["region"].get("review_margin_cells", 6)) * 64
-    wr_lo = max(0, (by0 - gy0) * 64 - mm)
-    wr_hi = min(ctx["tam_h"].shape[0], (by1 - gy0) * 64 + 65 + mm)
-    wc_lo = max(0, (bx0 - gx0) * 64 - mm)
-    wc_hi = min(ctx["tam_h"].shape[1], (bx1 - gx0) * 64 + 65 + mm)
+    review_bbox = ctx["region"].get("review_bbox_cells")
+    if review_bbox:
+        bx0, by0, bx1, by1 = map(int, review_bbox)
+        wr_lo = max(0, (by0 - gy0) * 64)
+        wr_hi = min(ctx["tam_h"].shape[0], (by1 - gy0) * 64 + 65)
+        wc_lo = max(0, (bx0 - gx0) * 64)
+        wc_hi = min(ctx["tam_h"].shape[1], (bx1 - gx0) * 64 + 65)
+    else:
+        by0, by1 = ctx["bbox"][1], ctx["bbox"][3]
+        bx0, bx1 = ctx["bbox"][0], ctx["bbox"][2]
+        mm = int(ctx["region"].get("review_margin_cells", 6)) * 64
+        wr_lo = max(0, (by0 - gy0) * 64 - mm)
+        wr_hi = min(ctx["tam_h"].shape[0], (by1 - gy0) * 64 + 65 + mm)
+        wc_lo = max(0, (bx0 - gx0) * 64 - mm)
+        wc_hi = min(ctx["tam_h"].shape[1], (bx1 - gx0) * 64 + 65 + mm)
     rcfg = ctx["render"]
     ppv = int(rcfg["px_per_vertex"])
     oth_view_full = np.where(np.isfinite(ctx["oth_h"]), ctx["oth_h"],
@@ -188,6 +246,23 @@ def main() -> int:
     save_shade_png(crop, outdir / f"{args.region}_v3_seam_zoom.png", 4,
                    title=f"{args.region} v3 seam zoom (4 px/vertex)")
 
+    overlay, overlay_counts = _boundary_overlay(
+        aft,
+        ctx,
+        all_seam_v,
+        wr_lo,
+        wr_hi,
+        wc_lo,
+        wc_hi,
+    )
+    save_shade_png(
+        overlay,
+        outdir / f"{args.region}_v3_boundary_overlay.png",
+        ppv,
+        title=(f"{args.region} boundary overlay: red=selected seam, "
+               "yellow=active boundary, cyan=unsolved seam"),
+    )
+
     metrics = {
         "region": args.region,
         "surface": sinfo,
@@ -196,6 +271,12 @@ def main() -> int:
         "curvature_jump": curv,
         "band_edge_max_abs_gu": edge_error,
         "max_normal_step_gu": max_drop,
+        "active_boundary_vertices": int(ctx["ring_v"].sum()),
+        "active_vertices": int(ctx["smask"].sum()),
+        "boundary_overlay": {
+            "path": f"{args.region}_v3_boundary_overlay.png",
+            **overlay_counts,
+        },
         "normal_profiles": prof["profiles"],
         "quality_failures": failures,
         "timings": {"context_s": round(t_context, 1),
@@ -212,6 +293,13 @@ def main() -> int:
     for kk, vv in metrics.items():
         if kk != "normal_profiles":
             print(f"  {kk}: {vv}")
+    print(
+        "  c1_stats: "
+        f"median={c1.get('median', 0.0)} "
+        f"p90={c1.get('p90', 0.0)} "
+        f"p99={c1.get('p99', 0.0)} "
+        f"max={c1.get('max', 0.0)}"
+    )
     print(f"wrote {outdir} (total {time.time() - t0:.1f}s)")
     if failures:
         print("FAILURE: quality gates violated:")
