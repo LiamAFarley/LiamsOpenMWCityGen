@@ -1,0 +1,501 @@
+{
+  "run": "primitive_plateau_canyon",
+  "region": "tr_plateau_transition",
+  "review_bbox_vertices": [
+    0,
+    2945,
+    0,
+    2881
+  ],
+  "target_bbox_vertices": [
+    1472,
+    2945,
+    1440,
+    2881
+  ],
+  "features": {
+    "owner_vertices": 1801537,
+    "ridge_vertices": 105331,
+    "valley_vertices": 108798,
+    "plateau_vertices": 144904,
+    "scarp_vertices": 66697,
+    "underwater_vertices": 252762,
+    "shoreline_vertices": 10712,
+    "coastal_vertices": 567700
+  },
+  "p1_plateau": {
+    "bbox": [
+      1472,
+      2945,
+      1440,
+      2881
+    ],
+    "semantic_downsample": 4,
+    "semantic_shape": [
+      369,
+      361
+    ],
+    "semantic_candidate_components": 5,
+    "selected_components": [
+      {
+        "primitive_id": 0,
+        "owner_component_id": 1,
+        "owner_vertices": 1409,
+        "seam_contact_vertices": 43,
+        "bbox": [
+          1476,
+          1520,
+          1920,
+          1960
+        ],
+        "confidence": 0.8174757957458496,
+        "fit": {
+          "order": "affine",
+          "coefficients": [
+            -1691.9062974815618,
+            -1627.0819558110134,
+            10164.814867592262
+          ],
+          "center_row": 24.35486160397445,
+          "center_col": 496.8289567068843,
+          "coordinate_scale": 515.0,
+          "fit_rms_gu": 17.393691329415716,
+          "fit_p95_gu": 30.995433129114453,
+          "tilt_x_gu_per_gu": -3.2852549465661394,
+          "tilt_y_gu_per_gu": -3.159382438467987,
+          "tilt_magnitude_gu_per_gu": 4.557915911514518,
+          "sample_count": 1409,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      },
+      {
+        "primitive_id": 1,
+        "owner_component_id": 2,
+        "owner_vertices": 479,
+        "seam_contact_vertices": 7,
+        "bbox": [
+          1748,
+          1781,
+          1472,
+          1527
+        ],
+        "confidence": 0.5923216342926025,
+        "fit": {
+          "order": "affine",
+          "coefficients": [
+            -234.71624610411686,
+            -1353.1217930580706,
+            9209.749959548608
+          ],
+          "center_row": 294.18789144050106,
+          "center_col": 59.25052192066806,
+          "coordinate_scale": 276.0,
+          "fit_rms_gu": 33.89288508791967,
+          "fit_p95_gu": 65.8358424906004,
+          "tilt_x_gu_per_gu": -0.8504211815366552,
+          "tilt_y_gu_per_gu": -4.902615192239386,
+          "tilt_magnitude_gu_per_gu": 4.975826756347395,
+          "sample_count": 479,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      },
+      {
+        "primitive_id": 2,
+        "owner_component_id": 3,
+        "owner_vertices": 975,
+        "seam_contact_vertices": 19,
+        "bbox": [
+          1781,
+          1815,
+          1472,
+          1529
+        ],
+        "confidence": 0.7242295145988464,
+        "fit": {
+          "order": "affine",
+          "coefficients": [
+            171.26514218266033,
+            -151.03942813618977,
+            8997.536492387819
+          ],
+          "center_row": 325.48410256410256,
+          "center_col": 57.2451282051282,
+          "coordinate_scale": 310.0,
+          "fit_rms_gu": 15.75519393262281,
+          "fit_p95_gu": 29.34239066230911,
+          "tilt_x_gu_per_gu": 0.5524682005892269,
+          "tilt_y_gu_per_gu": -0.48722396172964444,
+          "tilt_magnitude_gu_per_gu": 0.7366195093437508,
+          "sample_count": 975,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      },
+      {
+        "primitive_id": 3,
+        "owner_component_id": 5,
+        "owner_vertices": 420,
+        "seam_contact_vertices": 24,
+        "bbox": [
+          1843,
+          1867,
+          1472,
+          1503
+        ],
+        "confidence": 0.6580803394317627,
+        "fit": {
+          "order": "affine",
+          "coefficients": [
+            -2859.683871032228,
+            -74.48840664102985,
+            9792.835995628724
+          ],
+          "center_row": 380.95952380952383,
+          "center_col": 42.99285714285714,
+          "coordinate_scale": 362.0,
+          "fit_rms_gu": 11.302536252662707,
+          "fit_p95_gu": 21.72502128389041,
+          "tilt_x_gu_per_gu": -7.899679201746487,
+          "tilt_y_gu_per_gu": -0.205769079118867,
+          "tilt_magnitude_gu_per_gu": 7.902358660832059,
+          "sample_count": 420,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      }
+    ],
+    "score": {
+      "elevation_low_gu": 2577.928955078125,
+      "elevation_high_gu": 6459.931640625,
+      "slope_reference_gu_per_gu": 0.11188272386789322,
+      "prominence_cut_gu": 67.33935546875,
+      "near_scarp_vertices": 110521,
+      "candidate_vertices": 5984
+    }
+  },
+  "p2_footprint": {
+    "work_bbox": [
+      832,
+      2945,
+      800,
+      2881
+    ],
+    "semantic_downsample": 4,
+    "primitives": [
+      {
+        "primitive_id": 0,
+        "direction_owner_to_generated": [
+          0.0,
+          -0.65
+        ],
+        "support_vertices": 25680,
+        "support_core_vertices": 17840,
+        "scarp_vertices": 0,
+        "seed_count": 43,
+        "visited": 1607,
+        "max_cost": 256.0,
+        "height_scale_gu": 2458.427001953125,
+        "slope_scale_gu_per_gu": 6.824073791503906
+      },
+      {
+        "primitive_id": 1,
+        "direction_owner_to_generated": [
+          0.0,
+          -0.65
+        ],
+        "support_vertices": 28320,
+        "support_core_vertices": 18784,
+        "scarp_vertices": 0,
+        "seed_count": 7,
+        "visited": 1772,
+        "max_cost": 256.0,
+        "height_scale_gu": 2458.427001953125,
+        "slope_scale_gu_per_gu": 6.824073791503906
+      },
+      {
+        "primitive_id": 2,
+        "direction_owner_to_generated": [
+          0.0,
+          -0.65
+        ],
+        "support_vertices": 28256,
+        "support_core_vertices": 19296,
+        "scarp_vertices": 0,
+        "seed_count": 19,
+        "visited": 1769,
+        "max_cost": 256.0,
+        "height_scale_gu": 2458.427001953125,
+        "slope_scale_gu_per_gu": 6.824073791503906
+      },
+      {
+        "primitive_id": 3,
+        "direction_owner_to_generated": [
+          0.0,
+          -0.65
+        ],
+        "support_vertices": 22960,
+        "support_core_vertices": 15120,
+        "scarp_vertices": 0,
+        "seed_count": 24,
+        "visited": 1438,
+        "max_cost": 256.0,
+        "height_scale_gu": 2458.427001953125,
+        "slope_scale_gu_per_gu": 6.824073791503906
+      }
+    ],
+    "support_vertices": 73200,
+    "scarp_vertices": 0
+  },
+  "p3_plateau_candidate": {
+    "primitive_count": 4,
+    "candidate_vertices": 73072,
+    "candidate_weight_max": 3.0,
+    "fine_keep_core": 0.1,
+    "primitives": [
+      {
+        "primitive_id": 0,
+        "support_vertices": 25680,
+        "core_vertices": 17840,
+        "candidate_min_gu": 0.0,
+        "candidate_max_gu": 11182.544921875,
+        "top_fit": {
+          "order": "affine",
+          "coefficients": [
+            -1691.9062974815618,
+            -1627.0819558110134,
+            10164.814867592262
+          ],
+          "center_row": 24.35486160397445,
+          "center_col": 496.8289567068843,
+          "coordinate_scale": 515.0,
+          "fit_rms_gu": 17.393691329415716,
+          "fit_p95_gu": 30.995433129114453,
+          "tilt_x_gu_per_gu": -3.2852549465661394,
+          "tilt_y_gu_per_gu": -3.159382438467987,
+          "tilt_magnitude_gu_per_gu": 4.557915911514518,
+          "sample_count": 1409,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      },
+      {
+        "primitive_id": 1,
+        "support_vertices": 28320,
+        "core_vertices": 18784,
+        "candidate_min_gu": 0.0,
+        "candidate_max_gu": 10386.625,
+        "top_fit": {
+          "order": "affine",
+          "coefficients": [
+            -234.71624610411686,
+            -1353.1217930580706,
+            9209.749959548608
+          ],
+          "center_row": 294.18789144050106,
+          "center_col": 59.25052192066806,
+          "coordinate_scale": 276.0,
+          "fit_rms_gu": 33.89288508791967,
+          "fit_p95_gu": 65.8358424906004,
+          "tilt_x_gu_per_gu": -0.8504211815366552,
+          "tilt_y_gu_per_gu": -4.902615192239386,
+          "tilt_magnitude_gu_per_gu": 4.975826756347395,
+          "sample_count": 479,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      },
+      {
+        "primitive_id": 2,
+        "support_vertices": 28256,
+        "core_vertices": 19296,
+        "candidate_min_gu": 0.0,
+        "candidate_max_gu": 10996.2421875,
+        "top_fit": {
+          "order": "affine",
+          "coefficients": [
+            171.26514218266033,
+            -151.03942813618977,
+            8997.536492387819
+          ],
+          "center_row": 325.48410256410256,
+          "center_col": 57.2451282051282,
+          "coordinate_scale": 310.0,
+          "fit_rms_gu": 15.75519393262281,
+          "fit_p95_gu": 29.34239066230911,
+          "tilt_x_gu_per_gu": 0.5524682005892269,
+          "tilt_y_gu_per_gu": -0.48722396172964444,
+          "tilt_magnitude_gu_per_gu": 0.7366195093437508,
+          "sample_count": 975,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      },
+      {
+        "primitive_id": 3,
+        "support_vertices": 22960,
+        "core_vertices": 15120,
+        "candidate_min_gu": 0.0,
+        "candidate_max_gu": 13555.2021484375,
+        "top_fit": {
+          "order": "affine",
+          "coefficients": [
+            -2859.683871032228,
+            -74.48840664102985,
+            9792.835995628724
+          ],
+          "center_row": 380.95952380952383,
+          "center_col": 42.99285714285714,
+          "coordinate_scale": 362.0,
+          "fit_rms_gu": 11.302536252662707,
+          "fit_p95_gu": 21.72502128389041,
+          "tilt_x_gu_per_gu": -7.899679201746487,
+          "tilt_y_gu_per_gu": -0.205769079118867,
+          "tilt_magnitude_gu_per_gu": 7.902358660832059,
+          "sample_count": 420,
+          "row_offset": 1472,
+          "col_offset": 1440
+        }
+      }
+    ]
+  },
+  "p4_canyon": {
+    "primitive_count": 4,
+    "canyon_line_vertices": 0,
+    "canyon_depth_max_gu": 0.0,
+    "primitives": [
+      {
+        "primitive_id": 0,
+        "owner_valley_components": 0,
+        "owner_valley_vertices": 0,
+        "seed_count": 0,
+        "paths": []
+      },
+      {
+        "primitive_id": 1,
+        "owner_valley_components": 0,
+        "owner_valley_vertices": 0,
+        "seed_count": 0,
+        "paths": []
+      },
+      {
+        "primitive_id": 2,
+        "owner_valley_components": 0,
+        "owner_valley_vertices": 0,
+        "seed_count": 0,
+        "paths": []
+      },
+      {
+        "primitive_id": 3,
+        "owner_valley_components": 0,
+        "owner_valley_vertices": 0,
+        "seed_count": 0,
+        "paths": []
+      }
+    ]
+  },
+  "p5_reconciliation": {
+    "unknowns": 693738,
+    "guide_rows": 73200,
+    "background_weight": 0.12,
+    "linear_solver": "amg_rs_cg",
+    "cg_iterations": 4,
+    "solver_setup_s": 0.4113,
+    "solver_solve_s": 0.2547,
+    "residual_rms": 6.089356356315734e-05,
+    "correction_min": -2225.082900988942,
+    "correction_max": 3579.659209462294,
+    "conductance_min": 0.1,
+    "conductance_beta": 3.0,
+    "amg_levels": 8,
+    "active_vertices": 698680,
+    "fixed_vertices": 4942,
+    "owner_vertices": 1346,
+    "candidate_vertices": 73200
+  },
+  "final_lock": {
+    "unknowns": 163674,
+    "cg_status": 0,
+    "linear_solver": "amg_rs_cg",
+    "cg_iterations": 4,
+    "solver_setup_s": 0.1031,
+    "solver_solve_s": 0.0794,
+    "amg_levels": 6,
+    "equation_counts": {
+      "data": 0,
+      "laplacian": 163674,
+      "slope": 0,
+      "slope_anchors": 1470,
+      "boundary_eliminated": 4379
+    },
+    "residuals": {
+      "data_rms": 0.0,
+      "data_max": 0.0,
+      "laplacian_rms": 8.187237916332026e-06,
+      "laplacian_max": 0.0003145126256640651,
+      "slope_rms": 0.0,
+      "slope_max": 0.0,
+      "data_weighted_rms": 0.0,
+      "laplacian_weighted_rms": 8.187237916332026e-06,
+      "slope_weighted_rms": 0.0,
+      "boundary_max": 0.0
+    },
+    "assembly": {
+      "rows": 163674,
+      "nnz": 815084,
+      "empty_equation_rows": 0
+    },
+    "correction_bounds": {
+      "min": -1270.3671875,
+      "max": 750.4697265625,
+      "fixed_min": -1270.3671875,
+      "fixed_max": 750.4697265625
+    },
+    "slope_rows": 1470,
+    "anchor_count": 1470,
+    "fixed_count": 4379,
+    "anchor_conflict_tolerance_gu": 32.0,
+    "anchor_spread_max_gu": 0.0,
+    "anchor_conflict_policy": "skip",
+    "anchor_conflicts": [],
+    "mask_islands_removed": 0,
+    "corner_vertices": 13,
+    "corner_anchors": 25,
+    "corner_anchors_skipped": 14,
+    "ordinary_seam_samples_eligible": 1469,
+    "ordinary_anchors_created": 1454,
+    "ordinary_anchors_skipped_inactive": 0,
+    "ordinary_anchors_skipped_invalid_owner": 0,
+    "ordinary_anchors_skipped_boundary": 1,
+    "active_boundary_vertices": 1436,
+    "active_vertices": 168053,
+    "final_lock_cells": 2.0,
+    "final_lock_active_vertices": 168053,
+    "final_lock_boundary_vertices": 1436
+  },
+  "seam_c0_gu": 0.0,
+  "seam_c1_normals": {
+    "count": 1473,
+    "median": 0.0,
+    "p90": 0.0,
+    "p99": 0.0,
+    "max": 1628.873
+  },
+  "artifacts": {
+    "owner_reference": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_owner_reference.png",
+    "stage3_context": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_stage3_context.png",
+    "plateau_classification": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_plateau_classification.png",
+    "plateau_footprint_scarp": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_plateau_footprint_scarp.png",
+    "plateau_candidate": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_plateau_candidate.png",
+    "plateau_canyon_candidate": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_plateau_canyon_candidate.png",
+    "reconciled_pre_lock": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_reconciled_pre_lock.png",
+    "post_lock": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_post_lock.png",
+    "top_scarp_grayscale": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_top_scarp_grayscale.png",
+    "comparison_sheet": "F:\\ProcGenWorkspace\\output\\mapdata\\terrain\\tamriel_reworked\\solved\\v5_missing_cells\\v3\\primitive_plateau_canyon_tr_plateau_transition_seedfix_2026-08-25\\tr_plateau_transition_primitive_comparison_sheet.png"
+  },
+  "erosion_run": false,
+  "timings": {
+    "total_s": 61.9
+  }
+}

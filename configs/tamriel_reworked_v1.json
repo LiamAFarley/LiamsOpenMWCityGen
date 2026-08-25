@@ -1,5 +1,70 @@
 {
   "version": "v1",
+  "structure_mode": "primitives",
+  "terrain_primitives": {
+    "enabled": true,
+    "semantic_downsample": 4,
+    "target_review_quadrant": "bottom_right",
+    "target_fraction": [0.5, 0.5, 1.0, 1.0],
+    "bbox_margin_cells": 2.0,
+    "seam_seed_max_steps": 2.0,
+    "fine_keep_core": 0.1,
+    "plateau": {
+      "min_confidence": 0.55,
+      "min_component_vertices_semantic": 24,
+      "elevation_low_percentile": 60.0,
+      "elevation_high_percentile": 88.0,
+      "flat_slope_percentile": 35.0,
+      "prominence_percentile": 65.0,
+      "prominence_sigma_verts": 32.0,
+      "prominence_scale_gu": 256.0,
+      "max_continuation_cells": 8.0,
+      "ordinary_continuation_cells": 5.0,
+      "direction_seam_weight": 0.65,
+      "geodesic_lateral_eta": 0.4,
+      "geodesic_cost_multiplier": 2.0,
+      "support_core_threshold": 0.65,
+      "support_edge_threshold": 0.05,
+      "top_fit": "robust_affine",
+      "allow_quadratic_fit": true,
+      "quadratic_regularization": 0.01,
+      "quadratic_trigger_gu": 512.0,
+      "weight": 1.0
+    },
+    "scarp": {
+      "profile_samples_each_side_verts": 32,
+      "profile_bins": 32,
+      "fallback_width_verts": 8.0,
+      "authority_gain": 0.35,
+      "conductance_min": 0.1,
+      "conductance_beta": 3.0,
+      "weight": 1.5
+    },
+    "canyon": {
+      "min_confidence": 0.55,
+      "max_continuation_cells": 8.0,
+      "direction_penalty": 1.0,
+      "uphill_penalty": 4.0,
+      "target_low_penalty": 1.5,
+      "plateau_penalty": 1.0,
+      "path_cost_multiplier": 2.0,
+      "seed_search_radius_verts": 8.0,
+      "max_paths_per_plateau": 3,
+      "width_cells": 4.0,
+      "bottom_half_width_cells": 1.0,
+      "wall_exponent": 1.5,
+      "weight": 1.2
+    },
+    "reconciliation": {
+      "linear_solver": "amg_rs_cg",
+      "cg_tol": 1E-06,
+      "cg_maxiter": 200,
+      "amg_max_coarse": 500,
+      "background_weight": 0.12,
+      "conductance_min": 0.1,
+      "conductance_beta": 3.0
+    }
+  },
   "sources": [
     {
       "name": "mw",
