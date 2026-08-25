@@ -34,11 +34,8 @@ from scipy import ndimage, sparse
 from scipy.sparse.linalg import cg
 
 from procgen.terrainfield import load_corpus, seam_edges
-from procgen.terrain_relief import (
-    fill_missing_from_edges,
-    relief_config_hash,
-    relief_scale,
-)
+from procgen.terrain_relief import relief_config_hash
+from procgen.terrain_inpaint import compose_authoritative_field
 
 
 def smootherstep(t):
@@ -75,8 +72,10 @@ def load_target(root: Path, cfg: dict, tam_h: np.ndarray) -> np.ndarray:
                         "regenerate it."
                     )
                 return z["field"].astype(np.float32)
-    scaled, _ = relief_scale(tam_h, cfg.get("terrain_relief", {}))
-    return scaled.astype(np.float32)
+    raise SystemExit(
+        "FAILURE: relief target cache is missing; run "
+        "tools/terrain/relief_preview.py before the harmonic solve"
+    )
 
 
 def rasterize_seam(edges, solve_cells: set, shape, gy0: int, gx0: int,
@@ -137,15 +136,28 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     with open(root / cfg["paths"]["corpus_manifest"], encoding="utf-8") as fh:
         manifest = json.load(fh)
     base_code = manifest["source_names"].index(manifest["base_source"]) + 1
-    tam_h = fill_missing_from_edges(arrays["tam_h"])
+    tam_h_raw = arrays["tam_h"]
     cell_owner = arrays["cell_owner"]
     gy0, gx0 = int(meta["gy0"]), int(meta["gx0"])
-    target_full = load_target(root, cfg, tam_h)
-    own_full = np.where(np.isfinite(arrays["oth_h"]), arrays["oth_h"], tam_h)
-
     v3 = cfg["solve"].get("v3", {})
     region = cfg["solve"]["regions"][region_name]
     atlas_by_id = {r["cluster"]: r for r in atlas["clusters"]}
+    cell_height_source = arrays.get("cell_height_source")
+    if cell_height_source is None:
+        raise SystemExit(
+            "FAILURE: corpus lacks cell_height_source; rebuild the corpus"
+        )
+    raw_working = compose_authoritative_field(
+        tam_h_raw, arrays["oth_h"], cell_height_source, base_code
+    )
+    target_full = load_target(root, cfg, raw_working)
+    # The cached relief stage already includes the required-cell synthesis.
+    # Keeping it as the context composite preserves scaled base terrain and
+    # owner heights while preventing a second raw-field inpaint.
+    tam_h = target_full
+    own_full = compose_authoritative_field(
+        target_full, arrays["oth_h"], cell_height_source, base_code
+    )
     edges = seam_edges(cell_owner, base_code, gy0, gx0)
     retained = cell_owner == base_code
     blend = int(v3.get("blend_cells_max", 10))
@@ -160,11 +172,12 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
     for cid in sorted(region["cluster_ids"]):
         x0, y0, x1, y1 = atlas_by_id[cid]["bbox_cells_xyxy"]
         cluster_boxes.append((x0 - 1, y0 - 1, x1 + 1, y1 + 1))
-
+    review_bbox = region.get("review_bbox_cells")
+    selection_boxes = [tuple(map(int, review_bbox))] if review_bbox else cluster_boxes
     def in_any_box(cell):
         x, y = cell
         return any(x0 <= x <= x1 and y0 <= y <= y1
-                   for x0, y0, x1, y1 in cluster_boxes)
+                   for x0, y0, x1, y1 in selection_boxes)
 
     solve_cells: set[tuple[int, int]] = set()
 
@@ -289,7 +302,9 @@ def build_context(root: Path, cfg: dict, region_name: str) -> dict:
             nx.ravel()[flat] = nx_v
 
     return dict(
-        tam_h=tam_h, oth_h=arrays["oth_h"], cell_owner=cell_owner,
+        tam_h=tam_h, tam_h_raw=tam_h_raw, oth_h=arrays["oth_h"],
+        cell_owner=cell_owner, cell_height_source=cell_height_source,
+        own_full=own_full,
         base_code=base_code, gy0=gy0, gx0=gx0,
         names=manifest["source_names"], smask=active_mask, tam_w=tam_w,
         target=target, own_view=own_view, oth_w=oth_w, seam_v=seam_v,
@@ -529,9 +544,14 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
         and normals[0][0] * normals[1][0]
         + normals[0][1] * normals[1][1] == 0
     }
-    corner_anchor_count = 0
-    corner_anchor_skipped = 0
-    corner_claims: dict[tuple[int, int], list[float]] = {}
+    corner_diagonal_vertices: set[tuple[int, int]] = set()
+    for flat, normals in corner_vertices.items():
+        sy, sx = divmod(flat, target.shape[1])
+        dy1, dx1 = normals[0]
+        dy2, dx2 = normals[1]
+        uy, ux = sy + dy1 + dy2, sx + dx1 + dx2
+        if 0 <= uy < target.shape[0] and 0 <= ux < target.shape[1]:
+            corner_diagonal_vertices.add((uy, ux))
     ordinary_seam_samples_eligible = 0
     ordinary_anchors_created = 0
     ordinary_anchors_skipped_inactive = 0
@@ -543,37 +563,6 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
         raise ValueError(f"unknown anchor_conflict_policy: {conflict_policy}")
     fixed_conflict_spread = 0.0
     fixed_conflicts = []
-
-    for seam_flat, normals in corner_vertices.items():
-        sy, sx = divmod(seam_flat, target.shape[1])
-        (dy1, dx1), (dy2, dx2) = normals
-        oy1, ox1 = sy - dy1, sx - dx1
-        oy2, ox2 = sy - dy2, sx - dx2
-        uy, ux = sy + dy1 + dy2, sx + dx1 + dx2
-        if not (
-            0 <= oy1 < target.shape[0]
-            and 0 <= ox1 < target.shape[1]
-            and 0 <= oy2 < target.shape[0]
-            and 0 <= ox2 < target.shape[1]
-            and 0 <= uy < target.shape[0]
-            and 0 <= ux < target.shape[1]
-        ):
-            corner_anchor_skipped += 1
-            continue
-        if not (
-            active[uy, ux]
-            and np.isfinite(ctx["own_view"][oy1, ox1])
-            and np.isfinite(ctx["own_view"][oy2, ox2])
-        ):
-            corner_anchor_skipped += 1
-            continue
-        h_corner = float(fixed_final[sy, sx])
-        dh1 = h_corner - float(ctx["own_view"][oy1, ox1])
-        dh2 = h_corner - float(ctx["own_view"][oy2, ox2])
-        desired = h_corner + dh1 + dh2 - target[uy, ux]
-        corner_claims.setdefault((uy, ux), []).append(desired)
-        anchor_claims.setdefault((uy, ux), []).append(desired)
-        corner_anchor_count += 1
 
     for edge in ctx["edge_list"]:
         dy = int(round(edge["normal"][0]))
@@ -593,6 +582,8 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
             ordinary_seam_samples_eligible += 1
             if not active[uy, ux]:
                 ordinary_anchors_skipped_inactive += 1
+                continue
+            if (uy, ux) in corner_diagonal_vertices:
                 continue
             h_seam = float(fixed_final[sy, sx])
             desired_height = h_seam + (h_seam - float(ctx["own_view"][oy, ox]))
@@ -616,10 +607,7 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     anchor_spread_max = 0.0
     anchor_conflicts = []
     for (uy, ux), all_claims in anchor_claims.items():
-        # The diagonal continuation owns its generated vertex. Adjacent
-        # one-dimensional anchors remain everywhere else, but their claims at
-        # this same diagonal point would recreate the corner collision.
-        claims = corner_claims.get((uy, ux), all_claims)
+        claims = all_claims
         if fixed[uy, ux]:
             existing = fixed_final[uy, ux] - target[uy, ux]
             spread = max(abs(existing - value) for value in claims)
@@ -668,8 +656,8 @@ def solve_surface(ctx: dict, v3: dict) -> tuple[np.ndarray, dict]:
     report["anchor_conflicts"] = anchor_conflicts + fixed_conflicts
     report["mask_islands_removed"] = int(ctx.get("mask_islands_removed", 0))
     report["corner_vertices"] = int(len(corner_vertices))
-    report["corner_anchors"] = int(corner_anchor_count)
-    report["corner_anchors_skipped"] = int(corner_anchor_skipped)
+    report["corner_anchors"] = 0
+    report["corner_anchors_skipped"] = 0
     report["ordinary_seam_samples_eligible"] = int(
         ordinary_seam_samples_eligible
     )

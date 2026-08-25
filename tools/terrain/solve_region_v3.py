@@ -189,8 +189,10 @@ def main() -> int:
         wc_hi = min(ctx["tam_h"].shape[1], (bx1 - gx0) * 64 + 65 + mm)
     rcfg = ctx["render"]
     ppv = int(rcfg["px_per_vertex"])
-    oth_view_full = np.where(np.isfinite(ctx["oth_h"]), ctx["oth_h"],
-                             ctx["tam_h"]).astype(np.float32)
+    # Context tam_h is the authoritative composite after cell-level fallback
+    # and required-hole synthesis; do not reintroduce stale owner values at
+    # cells that deliberately fell back to Tamriel ESM.
+    oth_view_full = ctx["own_full"].astype(np.float32, copy=False)
 
     tgt = render_split_window(target_full, oth_view_full, ctx["cell_owner"],
                               ctx["base_code"], wr_lo, wr_hi, wc_lo, wc_hi, rcfg)

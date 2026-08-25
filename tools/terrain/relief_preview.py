@@ -46,6 +46,10 @@ from procgen.terrainfield import (  # noqa: E402
     load_config, load_corpus, hillshade, hypsometric_rgb, save_shade_png,
     render_split_window,
 )
+from procgen.terrain_inpaint import (  # noqa: E402
+    compose_authoritative_field,
+    synthesize_missing_heights,
+)
 from procgen import terrainstyle as ts  # noqa: E402
 from procgen import terrain_relief as tr
 from procgen.terrain_relief import (  # noqa: E402
@@ -130,40 +134,84 @@ def main() -> int:
     with open(_resolve(ROOT, cfg["paths"]["corpus_manifest"]), encoding="utf-8") as fh:
         manifest = json.load(fh)
     base_code = manifest["source_names"].index(manifest["base_source"]) + 1
-    tam_h = fill_missing_from_edges(arrays["tam_h"])
-    oth_view_full = np.where(np.isfinite(arrays["oth_h"]), arrays["oth_h"],
-                             tam_h).astype(np.float32)
 
     with open(_resolve(ROOT, cfg["paths"]["seam_atlas_json"]), encoding="utf-8") as fh:
         atlas = json.load(fh)
     region = cfg["solve"]["regions"][args.region]
     atlas_by_id = {r["cluster"]: r for r in atlas["clusters"]}
-    xs, ys = [], []
-    for cid in region["cluster_ids"]:
-        x0, y0, x1, y1 = atlas_by_id[cid]["bbox_cells_xyxy"]
-        xs += [x0, x1]; ys += [y0, y1]
-    bx0, bx1, by0, by1 = min(xs), max(xs), min(ys), max(ys)
+    cell_height_source = arrays.get("cell_height_source")
+    synth_height_cells = arrays.get("synth_height_cells")
+    if cell_height_source is None or synth_height_cells is None:
+        print("FAILURE: corpus lacks height provenance; rebuild corpus first")
+        return 1
     gy0, gx0 = meta["gy0"], meta["gx0"]
-    mm = 6 * 64
+    review_bbox = region.get("review_bbox_cells")
+    if review_bbox:
+        bx0, by0, bx1, by1 = map(int, review_bbox)
+        margin_cells = 0
+    else:
+        xs, ys = [], []
+        for cid in region["cluster_ids"]:
+            x0, y0, x1, y1 = atlas_by_id[cid]["bbox_cells_xyxy"]
+            xs += [x0, x1]
+            ys += [y0, y1]
+        bx0, bx1, by0, by1 = min(xs), max(xs), min(ys), max(ys)
+        margin_cells = int(region.get("review_margin_cells", 6))
+    required_cells = {
+        (cx, cy)
+        for cy in range(by0 - margin_cells, by1 + margin_cells + 1)
+        for cx in range(bx0 - margin_cells, bx1 + margin_cells + 1)
+    }
+    surf = cfg.get("solve", {}).get("v3", {}).get("surface", {})
+    raw_working = compose_authoritative_field(
+        arrays["tam_h"], arrays["oth_h"], cell_height_source, base_code
+    )
+    raw_missing = ~np.isfinite(raw_working)
+    # Relief is the first terrain transform. Its historical base input is a
+    # finite ESM surface; missing cells are blanked again immediately after
+    # this pass so they are solved, not silently inherited from nearest fill.
+    relief_input = fill_missing_from_edges(arrays["tam_h"])
+    mm = margin_cells * 64
     wr_lo = max(0, (by0 - gy0) * 64 - mm)
-    wr_hi = min(tam_h.shape[0], (by1 - gy0) * 64 + 65 + mm)
+    wr_hi = min(raw_working.shape[0], (by1 - gy0) * 64 + 65 + mm)
     wc_lo = max(0, (bx0 - gx0) * 64 - mm)
-    wc_hi = min(tam_h.shape[1], (bx1 - gx0) * 64 + 65 + mm)
+    wc_hi = min(raw_working.shape[1], (bx1 - gx0) * 64 + 65 + mm)
     ppv = int(rcfg["px_per_vertex"])
 
-    before = render_split_window(tam_h, oth_view_full, arrays["cell_owner"],
+    before = render_split_window(raw_working, raw_working, arrays["cell_owner"],
                                  base_code, wr_lo, wr_hi, wc_lo, wc_hi, rcfg)
     save_shade_png(before, outdir / f"{args.region}_relief_before.png", ppv,
                    title=f"{args.region} BEFORE relief (1x)")
 
     gains = [float(g) for g in args.gains.split(",")]
     info_by_gain = {}
+    synth_info = {}
     metrics = {"selfcheck": {k: v for k, v in check.items() if k != "info"},
-               "selfcheck_info": check.get("info", {}), "gains": {}}
+               "selfcheck_info": check.get("info", {}), "gains": {},
+               "synthesis": synth_info}
     scaled_max = None
     for g in gains:
         tg = time.time()
-        scaled, info = tr.relief_scale(tam_h, {**relief_cfg, "max_gain": g})
+        scaled_base, info = tr.relief_scale(
+            relief_input, {**relief_cfg, "max_gain": g}
+        )
+        scaled_input = scaled_base.copy()
+        scaled_input[raw_missing] = np.nan
+        scaled, synth_info = synthesize_missing_heights(
+            scaled_input,
+            arrays["oth_h"],
+            arrays["cell_owner"],
+            cell_height_source,
+            required_cells,
+            gy0,
+            gx0,
+            base_code,
+            linear_solver=str(surf.get("linear_solver", "amg_rs_cg")),
+            cg_tol=float(surf.get("cg_tol", 1e-6)),
+            cg_maxiter=int(surf.get("cg_maxiter", 200)),
+            amg_max_coarse=int(surf.get("amg_max_coarse", 500)),
+        )
+        oth_view_full = scaled.astype(np.float32, copy=False)
         info_by_gain[g] = info
         uw_err = info.get("underwater_max_delta_gu", 0.0)
         print(f"  gain {g:.0f}x: gentle_end={info['E_gentle_gu']} "
@@ -180,7 +228,7 @@ def main() -> int:
                        title=f"FULL MAP relief {int(g)}x (1px = {6 * 128} GU)")
         if abs(g - float(relief_cfg.get("max_gain", 3.0))) < 1e-6:
             scaled_max = scaled
-        del scaled
+        del scaled, scaled_base, scaled_input
 
     crop = render_split_window(scaled_max, oth_view_full, arrays["cell_owner"],
                                base_code, wr_lo, wr_hi, wc_lo, wc_hi, rcfg)
@@ -191,6 +239,7 @@ def main() -> int:
                         gx0=np.int32(meta["gx0"]), gy0=np.int32(meta["gy0"]))
     curve_plot(info_by_gain, outdir / "relief_response_curve.png")
 
+    metrics["synthesis"] = synth_info
     metrics["timings"] = {"total_s": round(time.time() - t0, 1)}
     with open(outdir / "relief_metrics.json", "w", encoding="utf-8") as fh:
         json.dump(metrics, fh, indent=2, default=lambda o: int(o))

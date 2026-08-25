@@ -18,10 +18,13 @@ Inputs
 
 Outputs
     npz arrays (all optional consumers go through :func:`load_corpus`):
-      ``tam_h``  float32 GU, vertex heights of the base plugin (NaN = void)
-      ``oth_h``  float32 GU, vertex heights of final owners (NaN = void)
+      ``tam_h``  float32 GU, raw vertex heights of the base plugin (NaN = void)
+      ``oth_h``  float32 GU, vertex heights of winning owners (NaN = void)
       ``cell_owner`` uint8 (0 = void, else source index + 1 into
       ``source_names``; owners resolve later-in-config-wins)
+      ``cell_height_source`` uint8 (0 = synthesize, otherwise the authoritative
+      source code for that cell)
+      ``synth_height_cells`` bool, the explicit required-height mask
       ``gx0``, ``gy0`` int cell coords of array origin
     Vertex ``(row, col)`` = ``((cy - gy0) * 64 + v, (cx - gx0) * 64 + u)``;
     spacing 128 GU; heights in game units (THU x 8).
@@ -66,6 +69,8 @@ class SourceScan:
     path: Path
     role: str
     cells: set[tuple[int, int]]
+    height_cells: set[tuple[int, int]]
+    flat_height_gu: dict[tuple[int, int], float]
     peak_gu: float | None
     peak_cell: tuple[int, int] | None
 
@@ -78,11 +83,24 @@ class SourceScan:
 
 def _scan_grids(name: str, path: Path, role: str) -> SourceScan:
     cells: set[tuple[int, int]] = set()
+    height_cells: set[tuple[int, int]] = set()
+    flat_height_gu: dict[tuple[int, int], float] = {}
     for rec in iter_land(path):
         cells.add(rec.grid)
+        if rec.heights_thu is not None:
+            try:
+                if np.asarray(rec.heights_thu).shape == (LAND_VERTS, LAND_VERTS):
+                    height_cells.add(rec.grid)
+                    arr = np.asarray(rec.heights_thu, dtype=np.float32)
+                    if np.ptp(arr) == 0:
+                        flat_height_gu[rec.grid] = float(arr.flat[0] * THU_TO_GU)
+            except (TypeError, ValueError):
+                pass
     if not cells:
         raise TerrainFieldError(f"source {name!r} ({path}) exposes no LAND records")
     return SourceScan(name=name, path=path, role=role, cells=cells,
+                      height_cells=height_cells,
+                      flat_height_gu=flat_height_gu,
                       peak_gu=None, peak_cell=None)
 
 
@@ -136,13 +154,42 @@ def build_corpus(config: dict) -> tuple[dict[str, np.ndarray], dict]:
     for (cx, cy), idx in cell_owner_flat.items():
         cell_owner[cy - gy0, cx - gx0] = idx + 1
 
+    # Resolve height authority independently from cell ownership. A winning
+    # owner LAND record without VHGT must not leave an earlier owner's raster
+    # under the cell; base VHGT is the only permitted owner-stub fallback.
+    cell_height_source = np.zeros((ncy, ncx), dtype=np.uint8)
+    fallback_cfg = config.get("flat_owner_fallback", {})
+    fallback_enabled = bool(fallback_cfg.get("enabled", True))
+    fallback_max_height_gu = float(fallback_cfg.get("max_height_gu", -2000.0))
+    flat_owner_fallback_cells: list[list[int]] = []
+    for (cx, cy), idx in cell_owner_flat.items():
+        if (cx, cy) in scans[idx].height_cells:
+            source_idx = idx
+            flat_gu = scans[idx].flat_height_gu.get((cx, cy))
+            if (
+                fallback_enabled
+                and idx != base_idx
+                and flat_gu is not None
+                and flat_gu <= fallback_max_height_gu
+                and (cx, cy) in base_scan.height_cells
+            ):
+                source_idx = base_idx
+                flat_owner_fallback_cells.append([cx, cy])
+        elif (cx, cy) in base_scan.height_cells:
+            source_idx = base_idx
+        else:
+            source_idx = -1
+        if source_idx >= 0:
+            cell_height_source[cy - gy0, cx - gx0] = source_idx + 1
+    synth_height_cells = (cell_owner != 0) & (cell_height_source == 0)
+
     fields: dict[str, np.ndarray | None] = {
         "tam_h": np.full((rows, cols), np.nan, dtype=np.float32),
         "oth_h": np.full((rows, cols), np.nan, dtype=np.float32),
     }
     dup_stats: dict[str, dict[str, float]] = {}
 
-    def fill(scan_idx: int, key: str) -> None:
+    def fill(scan_idx: int, key: str, winning_only: bool = False) -> None:
         scan = scans[scan_idx]
         stats = {"max_delta_gu": 0.0, "conflicts": 0}
         dup_stats[key] = stats
@@ -157,6 +204,9 @@ def build_corpus(config: dict) -> tuple[dict[str, np.ndarray], dict]:
                 continue
             arr = arr * THU_TO_GU
             cx, cy = rec.grid
+            if (winning_only and
+                    cell_height_source[cy - gy0, cx - gx0] != scan_idx + 1):
+                continue
             r0 = (cy - gy0) * CELL_QUADS
             c0 = (cx - gx0) * CELL_QUADS
             sl = fields[key][r0:r0 + LAND_VERTS, c0:c0 + LAND_VERTS]
@@ -177,7 +227,7 @@ def build_corpus(config: dict) -> tuple[dict[str, np.ndarray], dict]:
 
     fill(base_idx, "tam_h")
     for i in owner_order:
-        fill(i, "oth_h")
+        fill(i, "oth_h", winning_only=True)
 
     seams = seam_edges(cell_owner, base_idx + 1, gy0, gx0)
 
@@ -191,6 +241,7 @@ def build_corpus(config: dict) -> tuple[dict[str, np.ndarray], dict]:
                 "path": str(s.path),
                 "role": s.role,
                 "lands": len(s.cells),
+                "height_lands": len(s.height_cells),
                 "bbox_xyxy": list(s.bbox),
                 "peak_gu": s.peak_gu,
                 "peak_cell": list(s.peak_cell) if s.peak_cell else None,
@@ -203,6 +254,12 @@ def build_corpus(config: dict) -> tuple[dict[str, np.ndarray], dict]:
         "seam_edges": len(seams),
         "seam_tam_cells": len({e[0] for e in seams}),
         "duplicate_vertex_audit": dup_stats,
+        "cell_height_source_counts": {
+            str(int(code)): int((cell_height_source == code).sum())
+            for code in np.unique(cell_height_source)
+        },
+        "synth_height_cells": int(synth_height_cells.sum()),
+        "flat_owner_fallback_cells": flat_owner_fallback_cells,
         "expected_counts": config.get("expected_counts_v1"),
     }
     _warn_drift(manifest)
@@ -211,6 +268,8 @@ def build_corpus(config: dict) -> tuple[dict[str, np.ndarray], dict]:
         "tam_h": fields["tam_h"],
         "oth_h": fields["oth_h"],
         "cell_owner": cell_owner,
+        "cell_height_source": cell_height_source,
+        "synth_height_cells": synth_height_cells,
         "gx0": np.int32(gx0),
         "gy0": np.int32(gy0),
     }
